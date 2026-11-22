@@ -23,12 +23,15 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import type {
+  AssessmentVerdict,
   ChapterLessonItem,
   ChapterWorkflowState,
   CourseOutlineData,
   CourseRelationItem,
+  CourseUsageSummary,
   OutlineState,
   ReviewDecision,
+  SourceReadinessResponse,
   WorkflowJobResponse,
 } from '../../types';
 
@@ -62,6 +65,12 @@ const DECISION_BADGE: Record<ReviewDecision, { text: string; color: string }> = 
   APPROVE: { text: 'Đã duyệt', color: '#15803d' },
   EDIT: { text: 'Đã chỉnh sửa', color: '#1d4ed8' },
   REJECT: { text: 'Đã từ chối', color: '#b91c1c' },
+};
+
+const VERDICT_BADGE: Record<AssessmentVerdict, { text: string; color: string }> = {
+  supported: { text: 'AI: Đủ bằng chứng', color: '#15803d' },
+  revise: { text: 'AI: Cần chỉnh sửa', color: '#b45309' },
+  unsupported: { text: 'AI: Thiếu bằng chứng', color: '#b91c1c' },
 };
 
 export function CourseAuthoringWizard({ courseId, courseName, onPublishedGraph }: Props) {
@@ -99,6 +108,8 @@ export function CourseAuthoringWizard({ courseId, courseName, onPublishedGraph }
 
   // D5 Active Job state
   const [activeJob, setActiveJob] = useState<(WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }) | null>(null);
+  const [usage, setUsage] = useState<CourseUsageSummary | null>(null);
+  const [sourceReadiness, setSourceReadiness] = useState<SourceReadinessResponse | null>(null);
 
   const loadOutline = useCallback(async () => {
     setLoading(true);
@@ -126,7 +137,13 @@ export function CourseAuthoringWizard({ courseId, courseName, onPublishedGraph }
     async (cid: string, append = false, cursor?: string | null) => {
       if (!cid) return;
       try {
-        const res = await api.getChapterLessons(courseId, cid, cursor, 20);
+        const [res, readiness, usageRes] = await Promise.all([
+          api.getChapterLessons(courseId, cid, cursor, 20),
+          api.getChapterSourceReadiness(courseId, cid).catch(() => null),
+          api.getCourseUsage(courseId).catch(() => null),
+        ]);
+        if (readiness) setSourceReadiness(readiness);
+        if (usageRes) setUsage(usageRes);
         setLessons((prev) => (append ? [...prev, ...res.items] : res.items));
         setLessonsCursor(res.nextCursor);
         setOutline((prev) => ({
@@ -577,6 +594,25 @@ export function CourseAuthoringWizard({ courseId, courseName, onPublishedGraph }
         ))}
       </div>
 
+      {usage && (
+        <div className="muted-s" style={{ display: 'flex', gap: 14, flexWrap: 'wrap', padding: '6px 12px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--line)', marginBottom: 10 }}>
+          <span><b>AI Usage:</b> {usage.totalCalls} lượt gọi</span>
+          <span><b>Chi phí ước tính:</b> \${usage.estimatedCostUsd.toFixed(3)} / \${usage.budgetLimitUsd.toFixed(2)}</span>
+          <span><b>Ngân sách còn lại:</b> \${usage.remainingBudgetUsd.toFixed(3)}</span>
+        </div>
+      )}
+
+      {step === 2 && sourceReadiness && (
+        <div className={`wizard-banner${sourceReadiness.status === 'blocked' ? ' error' : ''}`} style={{ marginBottom: 10, background: sourceReadiness.status === 'ready' ? '#f0fdf4' : '#fffbeb', color: sourceReadiness.status === 'ready' ? '#166534' : '#92400e', borderColor: sourceReadiness.status === 'ready' ? '#bbf7d0' : '#fde68a' }}>
+          <FileText size={14} />
+          <span>
+            <b>Kiểm tra tài liệu chương (Source Readiness):</b> {sourceReadiness.counts.readablePages}/{sourceReadiness.counts.totalPages} trang có text
+            {sourceReadiness.counts.lowTextPages > 0 ? ` · ${sourceReadiness.counts.lowTextPages} trang ít chữ` : ''}
+            {sourceReadiness.warnings.length > 0 ? ` — ${sourceReadiness.warnings[0]}` : ''}
+          </span>
+        </div>
+      )}
+
       {/* Banners */}
       {error && (
         <div className="wizard-banner error" role="alert">
@@ -930,14 +966,36 @@ export function CourseAuthoringWizard({ courseId, courseName, onPublishedGraph }
                                 <div className="wizard-meta-row">
                                   <span>Nguồn: <code>{lesson.sourceRef}</code></span>
                                   <span>LO: {lesson.loCodes.join(', ')}</span>
+                                  {lesson.level && <span>Cấp: {lesson.level === 'topic' ? 'Chủ đề' : 'Bài học'}</span>}
+                                  {lesson.durationMin != null && <span>{lesson.durationMin} phút</span>}
+                                  {lesson.defaultWeek != null && <span>Tuần {lesson.defaultWeek}</span>}
+                                  {lesson.confidence != null && <span>Tin cậy: {Math.round(lesson.confidence * 100)}%</span>}
                                 </div>
+                                {lesson.aliases && lesson.aliases.length > 0 && (
+                                  <div className="muted-xs" style={{ marginTop: 2 }}>
+                                    Tên khác: {lesson.aliases.join(', ')}
+                                  </div>
+                                )}
                               </div>
-                              <span
-                                className="pill-badge"
-                                style={{ color: DECISION_BADGE[lesson.decision].color, borderColor: DECISION_BADGE[lesson.decision].color }}
-                              >
-                                {DECISION_BADGE[lesson.decision].text}
-                              </span>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                {lesson.assessment && (
+                                  <span
+                                    className="pill-badge"
+                                    style={{
+                                      color: VERDICT_BADGE[lesson.assessment.verdict].color,
+                                      borderColor: VERDICT_BADGE[lesson.assessment.verdict].color,
+                                    }}
+                                  >
+                                    {VERDICT_BADGE[lesson.assessment.verdict].text}
+                                  </span>
+                                )}
+                                <span
+                                  className="pill-badge"
+                                  style={{ color: DECISION_BADGE[lesson.decision].color, borderColor: DECISION_BADGE[lesson.decision].color }}
+                                >
+                                  {DECISION_BADGE[lesson.decision].text}
+                                </span>
+                              </div>
                             </div>
 
                             {editingLessonId === lesson.id ? (
@@ -964,6 +1022,40 @@ export function CourseAuthoringWizard({ courseId, courseName, onPublishedGraph }
                             {lesson.aiComment && (
                               <div className={`wizard-ai-note${lesson.hasWarning ? ' warn' : ''}`}>
                                 <Sparkles size={12} /> <span>{lesson.aiComment}</span>
+                              </div>
+                            )}
+
+                            {lesson.outcome && (
+                              <div className="muted-s" style={{ marginTop: 6 }}>
+                                <b>Mục tiêu đầu ra:</b> {lesson.outcome}
+                              </div>
+                            )}
+
+                            {lesson.details && lesson.details.length > 0 && (
+                              <div className="muted-s" style={{ marginTop: 6 }}>
+                                <b>Nội dung chi tiết:</b> {lesson.details.map((d) => d.name).join(' · ')}
+                              </div>
+                            )}
+
+                            {lesson.assessment?.issue && (
+                              <div className="wizard-ai-note warn" style={{ marginTop: 6 }}>
+                                <AlertTriangle size={12} /> <span>Kiểm định AI: {lesson.assessment.issue}</span>
+                              </div>
+                            )}
+
+                            {lesson.assessment?.suggestedReuseId && (
+                              <div className="muted-xs" style={{ marginTop: 4, color: 'var(--primary)' }}>
+                                Gợi ý tái sử dụng node đã duyệt: <code>{lesson.assessment.suggestedReuseId}</code>
+                              </div>
+                            )}
+
+                            {lesson.evidence && lesson.evidence.length > 0 && (
+                              <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {lesson.evidence.map((ev, idx) => (
+                                  <div key={idx} style={{ padding: '4px 8px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--line)', fontSize: 11 }}>
+                                    <b style={{ color: 'var(--primary)' }}>{ev.slideId}:</b> <i>"{ev.quote}"</i>
+                                  </div>
+                                ))}
                               </div>
                             )}
 
@@ -1094,19 +1186,48 @@ export function CourseAuthoringWizard({ courseId, courseName, onPublishedGraph }
                     <div className="wizard-review-top">
                       <div>
                         <b>
-                          [{rel.sourceChapterId}] {rel.sourceName} ──({rel.relationType})→ [{rel.targetChapterId}] {rel.targetName}
+                          [{rel.sourceChapterId}] {rel.sourceName} ──({rel.relationType}{rel.strength ? ` · ${rel.strength}` : ''})→ [{rel.targetChapterId}] {rel.targetName}
                         </b>
                         <div className="wizard-meta-row">
                           <span>Nguồn: <code>{rel.sourceRef}</code></span>
+                          {rel.confidence != null && <span>Tin cậy: {Math.round(rel.confidence * 100)}%</span>}
                         </div>
                       </div>
-                      <span
-                        className="pill-badge"
-                        style={{ color: DECISION_BADGE[rel.decision].color, borderColor: DECISION_BADGE[rel.decision].color }}
-                      >
-                        {DECISION_BADGE[rel.decision].text}
-                      </span>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {rel.assessment && (
+                          <span
+                            className="pill-badge"
+                            style={{
+                              color: VERDICT_BADGE[rel.assessment.verdict].color,
+                              borderColor: VERDICT_BADGE[rel.assessment.verdict].color,
+                            }}
+                          >
+                            {VERDICT_BADGE[rel.assessment.verdict].text}
+                          </span>
+                        )}
+                        <span
+                          className="pill-badge"
+                          style={{ color: DECISION_BADGE[rel.decision].color, borderColor: DECISION_BADGE[rel.decision].color }}
+                        >
+                          {DECISION_BADGE[rel.decision].text}
+                        </span>
+                      </div>
                     </div>
+                    {rel.reason && (
+                      <p className="wizard-item-body" style={{ marginTop: 6 }}>
+                        <b>Lý do:</b> {rel.reason}
+                        {rel.requiredKnowledge ? ` (Kiến thức cần: ${rel.requiredKnowledge})` : ''}
+                      </p>
+                    )}
+                    {rel.evidence && rel.evidence.length > 0 && (
+                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {rel.evidence.map((ev, idx) => (
+                          <div key={idx} style={{ padding: '4px 8px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--line)', fontSize: 11 }}>
+                            <b style={{ color: 'var(--primary)' }}>{ev.slideId}:</b> <i>"{ev.quote}"</i>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {rel.aiComment && (
                       <div className="wizard-ai-note">
                         <Sparkles size={12} /> <span>{rel.aiComment}</span>

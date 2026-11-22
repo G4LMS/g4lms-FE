@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Edit3,
   Eye,
+  Info,
   Link2,
   Maximize2,
   Merge,
@@ -61,7 +62,9 @@ export interface KnowledgeGraphCanvasProps {
   onApproveNode?: (nodeId: string) => Promise<void>;
   onApproveEdge?: (input: { fromId: string; toId: string; edgeType: string }) => Promise<void>;
   onOpenNodeEditor?: (nodeId: string) => void;
-  onStartLearning?: () => void;
+  onStartLearning?: (nodeId: string) => void;
+  focusRequest?: { id: string; nonce: number } | null;
+  onQuickUpdateNode?: (nodeId: string, input: { name: string; description: string }) => Promise<void>;
 }
 
 function wrapLines(text: string, maxChars: number, maxLines: number): string[] {
@@ -164,6 +167,8 @@ export function KnowledgeGraphCanvas({
   onApproveEdge,
   onOpenNodeEditor,
   onStartLearning,
+  focusRequest,
+  onQuickUpdateNode,
 }: KnowledgeGraphCanvasProps) {
   const isTeacher = role === 'teacher';
   const showEditControls = isTeacher && editMode;
@@ -179,6 +184,13 @@ export function KnowledgeGraphCanvas({
   const [hideRedundant, setHideRedundant] = useState(true);
   const [orderMode, setOrderMode] = useState(false);
   const [focusReview, setFocusReview] = useState(false);
+  const [teacherFilter, setTeacherFilter] = useState<'all' | 'approved' | 'pending' | 'missingQuiz'>('all');
+  const [teacherOverlay, setTeacherOverlay] = useState<'structure' | 'class'>('structure');
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [quickEdit, setQuickEdit] = useState(false);
+  const [quickName, setQuickName] = useState('');
+  const [quickDesc, setQuickDesc] = useState('');
+  const [quickSaving, setQuickSaving] = useState(false);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const selectedNodeIdRef = useRef<string | null>(null);
@@ -381,6 +393,13 @@ export function KnowledgeGraphCanvas({
     }
   };
 
+  useEffect(() => {
+    if (focusRequest?.id) {
+      revealNode(focusRequest.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest?.nonce]);
+
   // Fit & Focus camera helpers
   const fitView = useCallback((animate = true) => {
     const svgEl = svgRef.current;
@@ -462,7 +481,7 @@ export function KnowledgeGraphCanvas({
         .attr('markerWidth', 9)
         .attr('markerHeight', 9)
         .attr('markerUnits', 'userSpaceOnUse')
-        .attr('orient', 'auto')
+        .attr('orient', 'auto-start-reverse')
         .append('path')
         .attr('d', 'M0,-4L10,0L0,4Z')
         .attr('fill', EDGE_STYLES[type].color);
@@ -617,7 +636,7 @@ export function KnowledgeGraphCanvas({
       .attr('stroke', (d) => edgeStyleOf(d.data.type).color)
       .attr('stroke-width', (d) => edgeStyleOf(d.data.type).w)
       .attr('stroke-dasharray', (d) => edgeStyleOf(d.data.type).dash || null)
-      .attr('marker-end', (d) => (edgeStyleOf(d.data.type).arrow ? `url(#kg-ar-${d.data.type})` : null));
+      .attr('marker-start', (d) => (edgeStyleOf(d.data.type).arrow ? `url(#kg-ar-${d.data.type})` : null));
 
     eAll
       .select<SVGPathElement>('.kg-halo')
@@ -627,7 +646,7 @@ export function KnowledgeGraphCanvas({
     eAll
       .select<SVGTextElement>('.kg-elabel')
       .attr('fill', (d) => edgeStyleOf(d.data.type).color)
-      .text((d) => (d.data.type === 'EXPLAIN' || d.data.type === 'MORE' ? '' : d.data.type));
+      .text('');
 
     // ---- Nodes join ----
     const nSel = nodeG.selectAll<SVGGElement, SimNode>('g.kg-node').data(simNodes, (d) => d.id);
@@ -913,6 +932,10 @@ export function KnowledgeGraphCanvas({
     let ns: Set<string> | null = null;
     let es: Set<string> | null = null;
 
+    const assessTargets = new Set(
+      model.edges.filter((e) => e.type === 'ASSESS').map((e) => e.targetId),
+    );
+
     if (selectedNodeId) {
       ns = new Set([selectedNodeId]);
       es = new Set();
@@ -945,6 +968,19 @@ export function KnowledgeGraphCanvas({
           ns.add(e.targetId);
         }
       }
+    } else if (isTeacher && teacherFilter !== 'all') {
+      ns = new Set();
+      es = new Set();
+      for (const n of visible.nodes) {
+        if (n.isVirtualMore) continue;
+        const match =
+          teacherFilter === 'pending'
+            ? n.needsReview
+            : teacherFilter === 'approved'
+              ? !n.needsReview
+              : n.type === 'Concept' && !assessTargets.has(n.id);
+        if (match) ns.add(n.id);
+      }
     }
 
     const selEdgeObj = selectedEdgeId ? visible.edges.find((e) => e.id === selectedEdgeId) : null;
@@ -958,6 +994,21 @@ export function KnowledgeGraphCanvas({
           d.id === selectedNodeId ||
           Boolean(selEdgeObj && (d.id === selEdgeObj.sourceId || d.id === selEdgeObj.targetId)),
       );
+
+    if (isTeacher) {
+      nodeG
+        .selectAll<SVGGElement, SimNode>('g.kg-node')
+        .select<SVGCircleElement>('.kg-circ')
+        .attr('fill', (d) => {
+          if (d.data.isVirtualMore || teacherOverlay !== 'class') {
+            return nodeStyleOf(d.data.type).fill;
+          }
+          let h = 0;
+          for (const ch of d.id) h = (h * 31 + ch.charCodeAt(0)) % 65;
+          const pct = 30 + h;
+          return pct >= 75 ? '#bbf7d0' : pct >= 55 ? '#fef08a' : '#fecdd3';
+        });
+    }
 
     edgeG
       .selectAll<SVGGElement, SimLink>('g.kg-edge')
@@ -1258,6 +1309,48 @@ export function KnowledgeGraphCanvas({
             )}
           </div>
         </div>
+        {isTeacher && (
+          <div className="kg-chip-row" style={{ marginTop: 4 }}>
+            <span className="kg-chip-lbl">Soạn thảo</span>
+            <div className="kg-chips" style={{ flex: 1 }}>
+              {(
+                [
+                  ['all', 'Tất cả'],
+                  ['approved', 'Đã duyệt'],
+                  ['pending', 'Chờ duyệt (AI)'],
+                  ['missingQuiz', 'Thiếu câu hỏi'],
+                ] as const
+              ).map(([k, lbl]) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={`kg-pill${teacherFilter === k ? '' : ' off'}`}
+                  style={teacherFilter === k ? { background: '#e0f2fe', borderColor: '#7dd3fc', color: '#0369a1' } : undefined}
+                  onClick={() => setTeacherFilter(k)}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {teacherOverlay === 'class' && (
+                <span className="muted-xs" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  0%
+                  <span style={{ width: 54, height: 6, borderRadius: 999, background: 'linear-gradient(to right, #fecdd3, #fef08a, #bbf7d0)' }} />
+                  100% nắm vững
+                </span>
+              )}
+              <div className="kg-view-switch">
+                <button type="button" className={teacherOverlay === 'structure' ? 'on' : ''} onClick={() => setTeacherOverlay('structure')}>
+                  Cấu trúc
+                </button>
+                <button type="button" className={teacherOverlay === 'class' ? 'on' : ''} onClick={() => setTeacherOverlay('class')}>
+                  Kết quả lớp
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Stage + Right Inspector */}
@@ -1298,6 +1391,43 @@ export function KnowledgeGraphCanvas({
           <div className="kg-status">
             Đang hiển thị <b>{visibleRealNodeCount}</b> nút · <b>{visibleRealEdgeCount}</b> quan hệ
             {!showAll && hiddenTotalCount > 0 ? ` · còn ${hiddenTotalCount} nút ẩn (bấm +N trên nút để mở)` : ''}
+          </div>
+
+          <div style={{ position: 'absolute', left: 12, bottom: 38, zIndex: 5 }}>
+            {legendOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 36,
+                  left: 0,
+                  width: 240,
+                  padding: 10,
+                  borderRadius: 8,
+                  background: '#fff',
+                  border: '1px solid var(--line)',
+                  boxShadow: '0 6px 20px rgba(0,0,0,0.12)',
+                  fontSize: 11,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                <b>Chú giải nhanh</b>
+                <div>• Nút có chấm cam: AI đề xuất chờ duyệt</div>
+                <div>• Nút +N: bấm để mở thêm nhánh con</div>
+                <div>• Mũi tên đậm: Tiên quyết / Thành phần</div>
+                <div>• Mũi tên đứt: Liên quan (không thứ tự)</div>
+              </div>
+            )}
+            <button
+              type="button"
+              className="kg-btn sm"
+              title="Chú giải"
+              onClick={() => setLegendOpen((o) => !o)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            >
+              <Info size={13} /> Chú giải
+            </button>
           </div>
         </div>
 
@@ -1347,21 +1477,73 @@ export function KnowledgeGraphCanvas({
                       <CheckCircle2 size={12} /> Duyệt nút
                     </button>
                   )}
+                  {showEditControls && selectedNode.type !== 'Course' && onQuickUpdateNode && (
+                    <button
+                      type="button"
+                      className="btn btn-outline sm"
+                      onClick={() => {
+                        setQuickName(selectedNode.name);
+                        setQuickDesc(selectedNode.description);
+                        setQuickEdit((v) => !v);
+                      }}
+                    >
+                      <Edit3 size={12} /> {quickEdit ? 'Đóng sửa nhanh' : 'Sửa nhanh'}
+                    </button>
+                  )}
                   {showEditControls && selectedNode.type !== 'Course' && onOpenNodeEditor && (
                     <button
                       type="button"
                       className="btn btn-outline sm"
                       onClick={() => onOpenNodeEditor(selectedNode.id)}
                     >
-                      <Edit3 size={12} /> Sửa chi tiết
+                      Sửa chi tiết
                     </button>
                   )}
                   {!isTeacher && onStartLearning && (
-                    <button type="button" className="btn btn-primary sm" onClick={onStartLearning}>
-                      Mở tài liệu môn học
+                    <button type="button" className="btn btn-primary sm" onClick={() => onStartLearning(selectedNode.id)}>
+                      Học bài này
                     </button>
                   )}
                 </div>
+
+                {quickEdit && showEditControls && onQuickUpdateNode && (
+                  <div style={{ padding: 10, borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg)', marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <input
+                      value={quickName}
+                      onChange={(e) => setQuickName(e.target.value)}
+                      placeholder="Tên nút..."
+                      style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
+                    />
+                    <textarea
+                      rows={2}
+                      value={quickDesc}
+                      onChange={(e) => setQuickDesc(e.target.value)}
+                      placeholder="Mô tả ngắn..."
+                      style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
+                    />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary sm"
+                        disabled={quickSaving || !quickName.trim()}
+                        onClick={async () => {
+                          setQuickSaving(true);
+                          try {
+                            await onQuickUpdateNode(selectedNode.id, { name: quickName.trim(), description: quickDesc.trim() });
+                            setQuickEdit(false);
+                          } finally {
+                            setQuickSaving(false);
+                          }
+                        }}
+                      >
+                        {quickSaving ? 'Đang lưu...' : 'Lưu'}
+                      </button>
+                      <button type="button" className="btn btn-outline sm" onClick={() => setQuickEdit(false)}>
+                        Hủy
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <table className="kg-props">
                   <tbody>
@@ -1373,6 +1555,75 @@ export function KnowledgeGraphCanvas({
                       <tr>
                         <td>mô tả</td>
                         <td>{selectedNode.description}</td>
+                      </tr>
+                    )}
+                    {Boolean(selectedNode.props.outcome) && (
+                      <tr>
+                        <td>mục tiêu</td>
+                        <td>{String(selectedNode.props.outcome)}</td>
+                      </tr>
+                    )}
+                    {Array.isArray(selectedNode.props.aliases) && selectedNode.props.aliases.length > 0 && (
+                      <tr>
+                        <td>tên khác</td>
+                        <td>{(selectedNode.props.aliases as string[]).join(', ')}</td>
+                      </tr>
+                    )}
+                    {Boolean(selectedNode.props.level) && (
+                      <tr>
+                        <td>cấp độ</td>
+                        <td>{selectedNode.props.level === 'topic' ? 'Chủ đề (Topic)' : 'Bài học (Lesson)'}</td>
+                      </tr>
+                    )}
+                    {(selectedNode.props.duration_min ?? selectedNode.props.durationMin) != null && (
+                      <tr>
+                        <td>thời lượng</td>
+                        <td>{String(selectedNode.props.duration_min ?? selectedNode.props.durationMin)} phút</td>
+                      </tr>
+                    )}
+                    {(selectedNode.props.default_week ?? selectedNode.props.defaultWeek) != null && (
+                      <tr>
+                        <td>tuần gợi ý</td>
+                        <td>Tuần {String(selectedNode.props.default_week ?? selectedNode.props.defaultWeek)}</td>
+                      </tr>
+                    )}
+                    {typeof selectedNode.props.confidence === 'number' && (
+                      <tr>
+                        <td>độ tin cậy AI</td>
+                        <td>
+                          {Math.round(selectedNode.props.confidence * 100)}%
+                          <div className="kg-bar">
+                            <b
+                              style={{
+                                width: `${Math.round(selectedNode.props.confidence * 100)}%`,
+                                background: selectedNode.props.confidence < REVIEW_THRESHOLD ? '#f08a4b' : '#1f9d68',
+                              }}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {Boolean(selectedNode.props.verdict ?? selectedNode.props.pass5_verdict) && (
+                      <tr>
+                        <td>kiểm định AI</td>
+                        <td>
+                          <span
+                            className="pill-badge"
+                            style={{
+                              color:
+                                (selectedNode.props.verdict ?? selectedNode.props.pass5_verdict) === 'supported'
+                                  ? '#15803d'
+                                  : (selectedNode.props.verdict ?? selectedNode.props.pass5_verdict) === 'revise'
+                                    ? '#b45309'
+                                    : '#b91c1c',
+                            }}
+                          >
+                            {String(selectedNode.props.verdict ?? selectedNode.props.pass5_verdict)}
+                          </span>
+                          {Boolean(selectedNode.props.issue ?? selectedNode.props.pass5_note) && (
+                            <div className="muted-xs" style={{ marginTop: 4 }}>{String(selectedNode.props.issue ?? selectedNode.props.pass5_note)}</div>
+                          )}
+                        </td>
                       </tr>
                     )}
                     {Boolean(selectedNode.props.chapter_id) && (
@@ -1399,6 +1650,12 @@ export function KnowledgeGraphCanvas({
                         <td>{String(selectedNode.props.status)}</td>
                       </tr>
                     )}
+                    {Boolean(selectedNode.props.reuse_id ?? selectedNode.props.reuseId) && (
+                      <tr>
+                        <td>tái sử dụng</td>
+                        <td>{String(selectedNode.props.reuse_id ?? selectedNode.props.reuseId)}</td>
+                      </tr>
+                    )}
                     {Array.isArray(selectedNode.props.merged_from) && selectedNode.props.merged_from.length > 0 && (
                       <tr>
                         <td>đã gộp từ</td>
@@ -1407,6 +1664,42 @@ export function KnowledgeGraphCanvas({
                     )}
                   </tbody>
                 </table>
+
+                {Array.isArray(selectedNode.props.details) && selectedNode.props.details.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="muted-s" style={{ fontWeight: 700, marginBottom: 4 }}>Nội dung chi tiết</div>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
+                      {(selectedNode.props.details as Array<{ name?: string }>).map((d, idx) => (
+                        <li key={idx}>{d.name ?? String(d)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {Array.isArray(selectedNode.props.evidence) && selectedNode.props.evidence.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="muted-s" style={{ fontWeight: 700, marginBottom: 4 }}>Trích dẫn nguồn (AI Evidence)</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {(selectedNode.props.evidence as Array<{ slide_id?: string; slideId?: string; quote?: string }>).map((ev, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            border: '1px solid var(--line)',
+                            background: 'var(--bg)',
+                            fontSize: 11,
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, color: 'var(--primary)' }}>
+                            {ev.slide_id ?? ev.slideId ?? `Nguồn #${idx + 1}`}
+                          </div>
+                          {ev.quote && <div style={{ marginTop: 2, fontStyle: 'italic' }}>"{ev.quote}"</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="kg-rels">
                   {selectedNodeRelations.map(({ type, items }) => {
@@ -1517,14 +1810,50 @@ export function KnowledgeGraphCanvas({
                         <td>{String(selectedEdge.props.status)}</td>
                       </tr>
                     )}
+                    {Boolean(selectedEdge.props.strength) && (
+                      <tr>
+                        <td>độ mạnh</td>
+                        <td>{selectedEdge.props.strength === 'hard' ? 'Bắt buộc (hard)' : 'Mềm (soft)'}</td>
+                      </tr>
+                    )}
                     {Boolean(selectedEdge.props.reason) && (
                       <tr>
                         <td>lý do</td>
                         <td>{String(selectedEdge.props.reason)}</td>
                       </tr>
                     )}
+                    {Boolean(selectedEdge.props.required_knowledge ?? selectedEdge.props.requiredKnowledge) && (
+                      <tr>
+                        <td>kiến thức nền</td>
+                        <td>{String(selectedEdge.props.required_knowledge ?? selectedEdge.props.requiredKnowledge)}</td>
+                      </tr>
+                    )}
+                    {Boolean(selectedEdge.props.verdict ?? selectedEdge.props.pass5_verdict) && (
+                      <tr>
+                        <td>kiểm định AI</td>
+                        <td>
+                          <b>{String(selectedEdge.props.verdict ?? selectedEdge.props.pass5_verdict)}</b>
+                          {Boolean(selectedEdge.props.issue ?? selectedEdge.props.pass5_note) && (
+                            <div className="muted-xs">{String(selectedEdge.props.issue ?? selectedEdge.props.pass5_note)}</div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
+                {Array.isArray(selectedEdge.props.evidence) && selectedEdge.props.evidence.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="muted-s" style={{ fontWeight: 700, marginBottom: 4 }}>Trích dẫn nguồn (AI Evidence)</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {(selectedEdge.props.evidence as Array<{ slide_id?: string; slideId?: string; quote?: string }>).map((ev, idx) => (
+                        <div key={idx} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--line)', background: 'var(--bg)', fontSize: 11 }}>
+                          <div style={{ fontWeight: 700, color: 'var(--primary)' }}>{ev.slide_id ?? ev.slideId ?? `Nguồn #${idx + 1}`}</div>
+                          {ev.quote && <div style={{ marginTop: 2, fontStyle: 'italic' }}>"{ev.quote}"</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="kg-rels">
                   {[selectedEdge.sourceId, selectedEdge.targetId].map((id, idx) => {
                     const n = model.byId.get(id);

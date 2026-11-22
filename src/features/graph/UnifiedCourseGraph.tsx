@@ -1,16 +1,20 @@
-import { FileText, Layers, Network, PanelRight } from 'lucide-react';
+import { Activity, FileText, Layers, LayoutList, Map as MapIcon, Network, PanelRight } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import type { KnowledgeEdgeType, KnowledgeNodeType } from '../../types';
 import { useAsync } from '../common/useAsync';
 import { useLanguage } from '../i18n/LanguageContext';
+import { CourseIndexSidebar } from '../courses/CourseIndexSidebar';
 import { AppHeader } from '../layout/AppHeader';
 import { CourseAuthoringWizard } from '../teacher/CourseAuthoringWizard';
 import { DocPickerModal } from '../teacher/DocPickerModal';
 import { GenerationProgress } from '../teacher/GenerationProgress';
 import { LoView } from '../teacher/LoView';
+import { GraphHealthPanel } from './GraphHealthPanel';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas';
+import { StudentJourneyViews } from './StudentJourneyViews';
+import { TeacherReviewQueue } from './TeacherReviewQueue';
 
 type Phase = 'empty' | 'generating' | 'ready';
 
@@ -30,7 +34,10 @@ export function UnifiedCourseGraph({ role }: Props) {
   const [picker, setPicker] = useState(false);
   const [fileLabel, setFileLabel] = useState('');
   const [rightOpen, setRightOpen] = useState(true);
-  const [view, setView] = useState<'structure' | 'outcomes' | 'authoring'>('structure');
+  const [healthOpen, setHealthOpen] = useState(false);
+  const [view, setView] = useState<'path' | 'structure' | 'list' | 'outcomes' | 'authoring'>(
+    canEdit ? 'structure' : 'path',
+  );
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -52,12 +59,14 @@ export function UnifiedCourseGraph({ role }: Props) {
     () => (canEdit ? api.getTeacherCourses() : Promise.resolve([])),
     [canEdit],
   );
+  const [queueBusy, setQueueBusy] = useState(false);
+  const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null);
 
   useEffect(() => {
     setActionError('');
     setActionMessage('');
-    setView('structure');
-  }, [courseId]);
+    setView(canEdit ? 'structure' : 'path');
+  }, [courseId, canEdit]);
 
   const serviceError = [kgError, filesError, studentCoursesError, teacherCoursesError].find(Boolean);
   const coursesList = canEdit ? (teacherCourses ?? []) : (studentCourses ?? []);
@@ -189,8 +198,8 @@ export function UnifiedCourseGraph({ role }: Props) {
   };
 
   const teacherTabs = isVi
-    ? ['Lộ trình', 'Nội dung', 'Học viên', 'Điểm số']
-    : ['Path', 'Content', 'Students', 'Grades'];
+    ? ['Lộ trình', 'Nội dung', 'Học viên']
+    : ['Path', 'Content', 'Students'];
   const studentTabs = isVi
     ? ['Lộ trình kiến nghị', 'Lộ trình cá nhân hóa', 'Nội dung', 'Điểm số']
     : ['Recommended path', 'Personalized path', 'Content', 'Grades'];
@@ -201,7 +210,7 @@ export function UnifiedCourseGraph({ role }: Props) {
       nav(
         index === 0
           ? `/teacher/courses/${courseId}/graph`
-          : `/teacher/courses/${courseId}/${['', 'content', 'students', 'grades'][index]}`,
+          : `/teacher/courses/${courseId}/${['', 'content', 'students'][index]}`,
       );
     } else {
       if (index === 0) nav(`/courses/${courseId}/graph`);
@@ -214,6 +223,7 @@ export function UnifiedCourseGraph({ role }: Props) {
   return (
     <div className={`page graph-page${canEdit ? ' teacher' : ''}`}>
       <AppHeader showEditToggle={canEdit} editMode={editMode} onEditModeChange={setEditMode} />
+      <CourseIndexSidebar courseId={courseId} role={role} topOffset={74} />
 
       <div className="crumbs top">
         <a onClick={() => nav(canEdit ? '/teacher/courses' : '/home')}>{isVi ? 'Trang chủ' : 'Home'}</a>
@@ -238,9 +248,22 @@ export function UnifiedCourseGraph({ role }: Props) {
         </div>
         <div className="kg-subheader-actions">
           <div className="kg-view-switch">
+            {!canEdit && (
+              <button type="button" className={view === 'path' ? 'on' : ''} onClick={() => setView('path')}>
+                <MapIcon size={12} style={{ marginRight: 4 }} />
+                {isVi ? 'Lộ trình' : 'Path'}
+              </button>
+            )}
             <button type="button" className={view === 'structure' ? 'on' : ''} onClick={() => setView('structure')}>
-              {isVi ? 'Đồ thị tri thức' : 'Knowledge graph'}
+              {!canEdit && <Network size={12} style={{ marginRight: 4 }} />}
+              {canEdit ? (isVi ? 'Đồ thị tri thức' : 'Knowledge graph') : (isVi ? 'Bản đồ quan hệ' : 'Relation map')}
             </button>
+            {!canEdit && (
+              <button type="button" className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
+                <LayoutList size={12} style={{ marginRight: 4 }} />
+                {isVi ? 'Danh sách' : 'List'}
+              </button>
+            )}
             {canEdit && (
               <button type="button" className={view === 'authoring' ? 'on' : ''} onClick={() => setView('authoring')}>
                 <Layers size={12} style={{ marginRight: 4 }} />
@@ -252,16 +275,26 @@ export function UnifiedCourseGraph({ role }: Props) {
             </button>
           </div>
           {canEdit && (
-            <button type="button" className="btn btn-outline sm" onClick={() => setPicker(true)}>
-              <FileText size={12} /> {isVi ? 'Tạo từ PDF' : 'Generate from PDF'}
-            </button>
+            <>
+              <button
+                type="button"
+                className={`btn btn-outline sm${healthOpen ? ' on' : ''}`}
+                onClick={() => setHealthOpen((o) => !o)}
+              >
+                <Activity size={12} /> {isVi ? 'Sức khỏe' : 'Health'}
+              </button>
+              <button type="button" className="btn btn-outline sm" onClick={() => setPicker(true)}>
+                <FileText size={12} /> {isVi ? 'Tạo từ PDF' : 'Generate from PDF'}
+              </button>
+            </>
           )}
           <button
             type="button"
             className={`round-btn right${rightOpen ? '' : ' off'}`}
             style={{ position: 'static' }}
             onClick={() => setRightOpen((o) => !o)}
-            aria-label="Bảng thuộc tính"
+            aria-label={isVi ? 'Bảng thuộc tính' : 'Properties panel'}
+            title={isVi ? (rightOpen ? 'Ẩn bảng thuộc tính' : 'Mở bảng thuộc tính') : (rightOpen ? 'Hide properties panel' : 'Show properties panel')}
           >
             <PanelRight size={16} />
           </button>
@@ -331,22 +364,84 @@ export function UnifiedCourseGraph({ role }: Props) {
               Đang tải đồ thị tri thức…
             </div>
           ) : knowledgeGraph && knowledgeGraph.nodes.some((n) => n.type !== 'Course') ? (
-            <KnowledgeGraphCanvas
-              courseId={courseId}
-              data={knowledgeGraph}
-              role={role}
-              editMode={editMode}
-              rightOpen={rightOpen}
-              onAddNode={canEdit ? handleAddNode : undefined}
-              onAddEdge={canEdit ? handleAddEdge : undefined}
-              onMergeNodes={canEdit ? handleMergeNodes : undefined}
-              onDeleteNode={canEdit ? handleDeleteNode : undefined}
-              onDeleteEdge={canEdit ? handleDeleteEdge : undefined}
-              onApproveNode={canEdit ? handleApproveNode : undefined}
-              onApproveEdge={canEdit ? handleApproveEdge : undefined}
-              onOpenNodeEditor={canEdit ? (id) => nav(`/teacher/courses/${courseId}/nodes/${id}`) : undefined}
-              onStartLearning={!canEdit ? () => nav(`/courses/${courseId}/content`) : undefined}
-            />
+            !canEdit && (view === 'path' || view === 'list') ? (
+              <StudentJourneyViews
+                courseId={courseId}
+                data={knowledgeGraph}
+                mode={view}
+                onOpenLearn={(nodeId) => nav(`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`)}
+                onFocusInGraph={() => setView('structure')}
+              />
+            ) : (
+              <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}>
+              {canEdit && (
+                <TeacherReviewQueue
+                  data={knowledgeGraph}
+                  busy={queueBusy}
+                  onFocusNode={(nodeId) => setFocusRequest({ id: nodeId, nonce: Date.now() })}
+                  onApproveNode={handleApproveNode}
+                  onRejectNode={handleDeleteNode}
+                  onApproveEdge={handleApproveEdge}
+                  onRejectEdge={handleDeleteEdge}
+                  onApproveAll={async (items) => {
+                    setQueueBusy(true);
+                    setActionError('');
+                    try {
+                      for (const item of items) {
+                        if (item.kind === 'node') {
+                          await api.updateGraphNode(courseId, item.id, { status: 'approved', approved: true });
+                        } else if (item.fromId && item.toId && item.edgeType) {
+                          await api.approveGraphEdge(courseId, {
+                            fromId: item.fromId,
+                            toId: item.toId,
+                            edgeType: item.edgeType,
+                          });
+                        }
+                      }
+                      setActionMessage(`Đã duyệt nhanh ${items.length} mục AI đề xuất.`);
+                      refreshGraph();
+                    } catch (reason) {
+                      setActionError(reason instanceof Error ? reason.message : 'Không thể duyệt hàng loạt.');
+                    } finally {
+                      setQueueBusy(false);
+                    }
+                  }}
+                />
+              )}
+              <KnowledgeGraphCanvas
+                courseId={courseId}
+                data={knowledgeGraph}
+                role={role}
+                editMode={editMode}
+                rightOpen={rightOpen && !healthOpen}
+                focusRequest={focusRequest}
+                onQuickUpdateNode={
+                  canEdit
+                    ? async (nodeId, input) => {
+                        await api.updateGraphNode(courseId, nodeId, input);
+                        setActionMessage(`Đã cập nhật nhanh nút "${input.name}".`);
+                        refreshGraph();
+                      }
+                    : undefined
+                }
+                onAddNode={canEdit ? handleAddNode : undefined}
+                onAddEdge={canEdit ? handleAddEdge : undefined}
+                onMergeNodes={canEdit ? handleMergeNodes : undefined}
+                onDeleteNode={canEdit ? handleDeleteNode : undefined}
+                onDeleteEdge={canEdit ? handleDeleteEdge : undefined}
+                onApproveNode={canEdit ? handleApproveNode : undefined}
+                onApproveEdge={canEdit ? handleApproveEdge : undefined}
+                onOpenNodeEditor={canEdit ? (id) => nav(`/teacher/courses/${courseId}/nodes/${id}`) : undefined}
+                onStartLearning={!canEdit ? (nodeId) => nav(`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`) : undefined}
+              />
+              {canEdit && healthOpen && (
+                <GraphHealthPanel
+                  data={knowledgeGraph}
+                  onClose={() => setHealthOpen(false)}
+                />
+              )}
+              </div>
+            )
           ) : (
             <div className="empty-wrap">
               <div className="empty-card">

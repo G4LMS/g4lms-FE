@@ -21,13 +21,13 @@ export interface EdgeStyle {
 }
 
 export const NODE_STYLES: Record<string, NodeStyle> = {
-  Course: { fill: '#FFD86E', stroke: '#EDBA39', r: 42, vi: 'Môn học' },
-  LO: { fill: '#6DCE9E', stroke: '#4FB383', r: 34, vi: 'Chuẩn đầu ra' },
-  Assignment: { fill: '#FF756E', stroke: '#E0504A', r: 32, vi: 'Bài tập' },
-  Concept: { fill: '#68BDF6', stroke: '#4A9FD8', r: 30, vi: 'Khái niệm' },
-  Item: { fill: '#F79767', stroke: '#D97C4E', r: 26, vi: 'Câu hỏi' },
-  Content: { fill: '#C9CDD4', stroke: '#A5ABB6', r: 12, vi: 'Nội dung (slide)' },
-  More: { fill: '#eef3f9', stroke: '#0a6ed1', r: 22, vi: 'Xem thêm' },
+  Course: { fill: '#FFE8A3', stroke: '#E5B84B', r: 42, vi: 'Môn học' },
+  LO: { fill: '#A7E8C5', stroke: '#5CB88A', r: 34, vi: 'Chuẩn đầu ra' },
+  Assignment: { fill: '#FFB3AE', stroke: '#E0706A', r: 32, vi: 'Bài tập' },
+  Concept: { fill: '#A6D8FA', stroke: '#58A4D8', r: 30, vi: 'Khái niệm' },
+  Item: { fill: '#FFC4A3', stroke: '#DF8C5E', r: 26, vi: 'Câu hỏi' },
+  Content: { fill: '#E2E6EC', stroke: '#B0B8C4', r: 12, vi: 'Nội dung (slide)' },
+  More: { fill: '#EEF4FB', stroke: '#5B9BD5', r: 22, vi: 'Xem thêm' },
 };
 
 export const EDGE_STYLES: Record<string, EdgeStyle> = {
@@ -126,6 +126,7 @@ export function buildGraphModel(raw: KnowledgeGraphData): GraphModel {
   }
 
   const edges: NormalizedEdge[] = [];
+  const edgeIndexByKey = new Map<string, number>();
   raw.edges.forEach((e: KnowledgeGraphEdge, index: number) => {
     const s = byId.get(e.source);
     const t = byId.get(e.target);
@@ -133,7 +134,7 @@ export function buildGraphModel(raw: KnowledgeGraphData): GraphModel {
     const props = { ...(e.properties ?? {}) };
     const confidence = typeof props.confidence === 'number' ? props.confidence : null;
     const review = props.status === 'proposed' || (confidence !== null && confidence < REVIEW_THRESHOLD);
-    edges.push({
+    const candidate: NormalizedEdge = {
       id: `e${index}_${s.id}_${t.id}_${e.type}`,
       sourceId: s.id,
       targetId: t.id,
@@ -141,7 +142,20 @@ export function buildGraphModel(raw: KnowledgeGraphData): GraphModel {
       props,
       review,
       redundant: false,
-    });
+    };
+    const dedupKey = `${s.id}\0${t.id}\0${e.type}`;
+    const existingIdx = edgeIndexByKey.get(dedupKey);
+    if (existingIdx === undefined) {
+      edgeIndexByKey.set(dedupKey, edges.length);
+      edges.push(candidate);
+    } else {
+      const prev = edges[existingIdx];
+      const prevConf = typeof prev.props.confidence === 'number' ? prev.props.confidence : 0;
+      const nextConf = confidence ?? 0;
+      if ((prev.review && !candidate.review) || nextConf > prevConf) {
+        edges[existingIdx] = candidate;
+      }
+    }
   });
 
   // PREREQUISITE adjacency for learning order depth & transitive reduction
