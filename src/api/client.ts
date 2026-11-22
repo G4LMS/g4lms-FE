@@ -8,9 +8,12 @@ import type {
   NotificationRecord, OutlineDraftResponse, PdfFile, ProfileDetails, ProfileRecord, PublishCourseResponse, QueueSummary, Quiz, QuizAttempt, ReviewDecision, Role, StudentAttendanceData,
   StudentCourse, StudentGradeItem, StudentGraph, StudentLearningProfile, SubmitAssignmentInput, SubmitQuizInput, TeacherCourse,
   TeacherCourseTopic, TeacherGradeRow, TeacherGraphData, UpdateAnnouncementInput, UpdateAssignmentInput, UpdateAttendanceSessionInput, UpdateGradebookRowInput, UpdateTeacherCourseInput, User, WorkflowJobResponse,
+  AdaptiveCourseSettings, CourseUsageSummary, SourceReadinessResponse,
 } from '../types';
 
 import { mockApi } from '../../mockdata/service';
+
+export { graphGenApi, GraphGenApiError } from './graphGenerator';
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? '/api';
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false';
@@ -799,6 +802,27 @@ export const api = {
       () => mockApi.resumeWorkflowJob(jobId, idempotencyKey),
       `/jobs/${encodeURIComponent(jobId)}/resume`,
       { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey } },
+    ),
+  getChapterSourceReadiness: (courseId: string, chapterId: string): Promise<SourceReadinessResponse> =>
+    invoke(
+      () => mockApi.getChapterSourceReadiness(courseId, chapterId),
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/source-readiness`,
+    ),
+  getCourseUsage: (courseId: string): Promise<CourseUsageSummary> =>
+    invoke(
+      () => mockApi.getCourseUsage(courseId),
+      `/courses/${encodeURIComponent(courseId)}/usage`,
+    ),
+  getAdaptiveSettings: (courseId: string): Promise<AdaptiveCourseSettings> =>
+    invoke(
+      () => mockApi.getAdaptiveSettings(courseId),
+      `/teacher/courses/${encodeURIComponent(courseId)}/adaptive-settings`,
+    ),
+  saveAdaptiveSettings: (courseId: string, settings: AdaptiveCourseSettings): Promise<AdaptiveCourseSettings> =>
+    invoke(
+      () => mockApi.saveAdaptiveSettings(courseId, settings),
+      `/teacher/courses/${encodeURIComponent(courseId)}/adaptive-settings`,
+      json('PUT', settings),
     ),
 
 };

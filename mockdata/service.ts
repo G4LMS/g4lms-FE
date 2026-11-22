@@ -9,10 +9,11 @@ import type {
   TeacherCourseTopic, TeacherGradeRow, TeacherGraphData, UpdateAnnouncementInput, UpdateAssignmentInput, UpdateAttendanceSessionInput, UpdateGradebookRowInput, UpdateTeacherCourseInput, User, WorkflowJobResponse,
 } from '../src/types';
 import * as data from './fixtures';
+import { resolveRichConceptContent } from './conceptDetails';
 import { quizFixtures } from './quizFixtures';
 import {
   assignments, attendanceSessions, calendarEvents, conversationMessages, conversations, courseAnnouncements,
-  courseOverallGrades, dashboardActivities, homepageSlides, loginHeroStats, messageContacts,
+  courseOverallGrades, dashboardActivities, dsaTeacherCourseTopics, homepageSlides, loginHeroStats, messageContacts,
   networkCourseSections, notifications, profileDetails, studentCourseSections, studentGradesByCourse,
   teacherCourseTopics, teacherGradebook, teacherRoster,
 } from './portalFixtures';
@@ -173,14 +174,14 @@ function buildFallbackKnowledgeGraph(courseId: string): KnowledgeGraphData {
     nodes.push(node);
   };
 
-  data.learningOutcomes.forEach((lo) => {
+  data.learningOutcomes.forEach((lo, loIdx) => {
     const loId = `${courseId}.${lo.id}`;
     addNode({
       id: loId,
       name: lo.title,
       type: 'LO',
       description: `Chuẩn đầu ra ${lo.id} của môn ${courseTitle}.`,
-      properties: { code: lo.id },
+      properties: { code: lo.id, default_week: loIdx + 1, duration_min: 30 },
     });
     edges.push({ source: loId, target: courseId, type: 'DEVELOP', properties: { status: 'approved', confidence: 0.96 } });
   });
@@ -195,6 +196,10 @@ function buildFallbackKnowledgeGraph(courseId: string): KnowledgeGraphData {
       description: `Chủ đề trọng tâm #${cluster.index}: ${cluster.name} (${cluster.nodeCount} khái niệm thành phần).`,
       properties: {
         chapter_id: chapterId,
+        default_week: cluster.index,
+        duration_min: 40,
+        confidence: cluster.approved ? 0.92 : 0.78,
+        level: 'topic',
         status: cluster.approved ? 'approved' : 'proposed',
         node_count: cluster.nodeCount,
       },
@@ -220,13 +225,21 @@ function buildFallbackKnowledgeGraph(courseId: string): KnowledgeGraphData {
       .filter((n) => !n.ghost)
       .forEach((innerNode, idx) => {
         const subId = `${courseId}_${innerNode.id}`;
+        const rich = resolveRichConceptContent(innerNode.name);
         addNode({
           id: subId,
           name: innerNode.name,
           type: 'Concept',
-          description: `Khái niệm thuộc chủ đề ${cluster.name}.`,
+          description: rich.description,
           properties: {
             chapter_id: chapterId,
+            default_week: cluster.index,
+            duration_min: 20 + (idx % 4) * 10,
+            confidence: innerNode.status === 'approved' ? 0.94 : 0.76,
+            level: 'lesson',
+            outcome: rich.outcome,
+            details: rich.details,
+            evidence: rich.evidence,
             status: innerNode.status === 'approved' ? 'approved' : 'proposed',
           },
         });
@@ -338,7 +351,13 @@ async function ensureKnowledgeGraph(courseId: string, forceGenerate = false): Pr
     if (!existing.nodes.some((n) => n.type !== 'Course')) {
       return { nodes: [], edges: [] };
     }
-    return existing;
+    const hasWeekData = existing.nodes.some((n) => n.type === 'Concept' && n.properties?.default_week != null);
+    const hasRichDetails = existing.nodes.some(
+      (n) => n.type === 'Concept' && (Array.isArray(n.properties?.details) || Array.isArray(n.properties?.aspects)),
+    );
+    if (hasWeekData && hasRichDetails) {
+      return existing;
+    }
   }
 
   // Pre-configured demo courses
@@ -348,7 +367,15 @@ async function ensureKnowledgeGraph(courseId: string, forceGenerate = false): Pr
       if (response.ok) {
         const raw = (await response.json()) as KnowledgeGraphData;
         const cloned: KnowledgeGraphData = {
-          nodes: raw.nodes.map((n) => ({ ...n, properties: { ...(n.properties ?? {}) } })),
+          nodes: raw.nodes.map((n) => {
+            const props = { ...(n.properties ?? {}) };
+            if (n.type === 'Concept' && !Array.isArray(props.details) && !Array.isArray(props.aspects)) {
+              const rich = resolveRichConceptContent(n.name, n.description, typeof props.outcome === 'string' ? props.outcome : undefined);
+              props.details = rich.details;
+              if (!Array.isArray(props.evidence)) props.evidence = rich.evidence;
+            }
+            return { ...n, properties: props };
+          }),
           edges: raw.edges.map((e) => ({ ...e, properties: { ...(e.properties ?? {}) } })),
         };
         knowledgeGraphStore.set(normId, cloned);
@@ -1004,7 +1031,8 @@ export const mockApi = {
         : null;
     return wait({ ...row });
   },
-  getTeacherCourseTopics: (_courseId: string): Promise<TeacherCourseTopic[]> => wait(teacherCourseTopics),
+  getTeacherCourseTopics: (courseId: string): Promise<TeacherCourseTopic[]> =>
+    wait(courseId === 'CO3093' ? teacherCourseTopics : dsaTeacherCourseTopics),
   getAssignments(courseId: string, role: Role): Promise<Assignment[]> {
     const rows = assignments
       .filter((item) => item.courseId === courseId && (role === 'teacher' || item.status === 'published'))
@@ -2096,6 +2124,12 @@ export const mockApi = {
               targetChapterId: chIds[i + 1],
               relationType: 'PREREQUISITE',
               sourceRef: `Liên kết ${chIds[i]} → ${chIds[i + 1]}`,
+              reason: 'Khái niệm chương trước là nền tảng trực tiếp để tiếp thu bài mở đầu chương sau.',
+              requiredKnowledge: `Nắm vững ${srcLessons[srcLessons.length - 1].title}`,
+              strength: 'hard',
+              confidence: 0.91,
+              evidence: [{ slideId: `${chIds[i]}_p12`, quote: `Khái niệm ${srcLessons[srcLessons.length - 1].title} được dùng trực tiếp ở phần đầu ${tgtLessons[0].title}.` }],
+              assessment: { verdict: 'supported', issue: '' },
               aiComment: 'AI đề xuất tiên quyết liên chương dựa trên khái niệm nền tảng.',
               hasWarning: false,
               decision: 'PENDING',
@@ -2128,5 +2162,58 @@ export const mockApi = {
     job.status = 'QUEUED';
     job.polls = 0;
     return wait({ jobId, status: 'QUEUED' }, 80);
+  },
+  getChapterSourceReadiness(courseId: string, chapterId: string) {
+    const state = ensureAuthoringState(courseId);
+    const ch = state.outline.chapters.find((c) => c.id === chapterId);
+    const hasDocs = (ch?.documentCount ?? 0) > 0;
+    return wait({
+      status: hasDocs ? ('ready' as const) : ('warning' as const),
+      canGenerate: hasDocs,
+      counts: {
+        totalPages: hasDocs ? 24 : 0,
+        readablePages: hasDocs ? 22 : 0,
+        lowTextPages: hasDocs ? 2 : 0,
+      },
+      warnings: hasDocs
+        ? ['2 trang có ít văn bản (chủ yếu là sơ đồ/hình ảnh), hệ thống chỉ trích xuất phần text layer.']
+        : ['Chưa có tài liệu chương nào được tải lên.'],
+      revision: ch?.revision ?? 1,
+    }, 60);
+  },
+  getCourseUsage(courseId: string) {
+    const state = ensureAuthoringState(courseId);
+    const lessonCount = Object.values(state.lessonsByChapter).reduce((s, arr) => s + arr.length, 0);
+    const calls = Math.max(1, lessonCount + state.relations.length);
+    const est = Number((calls * 0.015).toFixed(3));
+    return wait({
+      totalCalls: calls,
+      providerReportedCostUsd: est,
+      estimatedCostUsd: est,
+      budgetLimitUsd: 5.0,
+      remainingBudgetUsd: Number(Math.max(0, 5.0 - est).toFixed(3)),
+    }, 50);
+  },
+  getAdaptiveSettings(courseId: string) {
+    try {
+      const raw = localStorage.getItem(`g4lms.adaptive.${courseId}`);
+      if (raw) return wait(JSON.parse(raw), 40);
+    } catch { /* ignore */ }
+    return wait({
+      masteryThreshold: 80,
+      hardPrereqStrict: true,
+      softPrereqWeight: 40,
+      quizWeight: 60,
+      assignmentWeight: 40,
+      remedialTriggerScore: 55,
+      allowSkipMastered: true,
+      maxWeeklyMinutes: 180,
+    }, 40);
+  },
+  saveAdaptiveSettings(courseId: string, settings: import('../src/types').AdaptiveCourseSettings) {
+    try {
+      localStorage.setItem(`g4lms.adaptive.${courseId}`, JSON.stringify(settings));
+    } catch { /* ignore */ }
+    return wait(settings, 60);
   },
 };

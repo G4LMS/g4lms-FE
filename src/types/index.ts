@@ -166,6 +166,7 @@ export interface RosterStudent {
   name: string;
   email?: string;
   enrolledAt?: string;
+  lastUpdatedAt?: string;
   status: 'active' | 'withdrawn';
   progress: number;
 }
@@ -786,12 +787,45 @@ export interface WorkflowJobResponse {
   resumeBlockedReason?: string;
 }
 
+export type AssessmentVerdict = 'supported' | 'revise' | 'unsupported';
+
+export interface GraphCitation {
+  slideId: string;
+  quote: string;
+}
+
+export interface ChapterLessonDetail {
+  name: string;
+  evidence: GraphCitation[];
+}
+
+export interface NodeAssessmentFinding {
+  verdict: AssessmentVerdict;
+  issue: string;
+  suggestedReuseId?: string | null;
+}
+
+export interface EdgeAssessmentFinding {
+  verdict: AssessmentVerdict;
+  issue: string;
+}
+
 export interface ChapterLessonItem {
   id: string;
   title: string;
   content: string;
   sourceRef: string;
   loCodes: string[];
+  aliases?: string[];
+  outcome?: string;
+  level?: 'topic' | 'lesson';
+  durationMin?: number;
+  defaultWeek?: number;
+  confidence?: number;
+  details?: ChapterLessonDetail[];
+  evidence?: GraphCitation[];
+  reuseId?: string | null;
+  assessment?: NodeAssessmentFinding;
   aiComment?: string;
   hasWarning?: boolean;
   decision: ReviewDecision;
@@ -808,10 +842,47 @@ export interface CourseRelationItem {
   targetChapterId: string;
   relationType: 'PREREQUISITE' | 'PART_OF' | 'RELATED_TO' | 'DEVELOP';
   sourceRef: string;
+  reason?: string;
+  requiredKnowledge?: string;
+  strength?: 'hard' | 'soft' | null;
+  confidence?: number;
+  evidence?: GraphCitation[];
+  assessment?: EdgeAssessmentFinding;
   aiComment?: string;
   hasWarning?: boolean;
   decision: ReviewDecision;
   reviewNote?: string;
+}
+
+export interface SourceReadinessResponse {
+  status: 'ready' | 'warning' | 'blocked';
+  canGenerate: boolean;
+  counts: {
+    totalPages: number;
+    readablePages: number;
+    lowTextPages: number;
+  };
+  warnings: string[];
+  revision: number;
+}
+
+export interface CourseUsageSummary {
+  totalCalls: number;
+  providerReportedCostUsd: number;
+  estimatedCostUsd: number;
+  budgetLimitUsd: number;
+  remainingBudgetUsd: number;
+}
+
+export interface AdaptiveCourseSettings {
+  masteryThreshold: number;
+  hardPrereqStrict: boolean;
+  softPrereqWeight: number;
+  quizWeight: number;
+  assignmentWeight: number;
+  remedialTriggerScore: number;
+  allowSkipMastered: boolean;
+  maxWeeklyMinutes: number;
 }
 
 export interface PublishCourseResponse {

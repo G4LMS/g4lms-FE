@@ -64,14 +64,52 @@ export const studentCourseSections: CourseSection[] = [
   {
     id: 'materials', titleVi: 'Tài liệu môn học', titleEn: 'Course materials',
     items: [
-      { id: 'm1', nameVi: 'Đề cương môn học', nameEn: 'Course syllabus', kind: 'pdf' },
-      { id: 'm2', nameVi: 'Sách tham khảo 1', nameEn: 'Reference book 1', kind: 'pdf' },
-      { id: 'm3', nameVi: 'Sách tham khảo số 2', nameEn: 'Reference book 2', kind: 'pdf' },
+      { id: 'dsa-syllabus', nameVi: 'Đề cương môn Cấu trúc dữ liệu & Giải thuật', nameEn: 'DSA Course Syllabus', kind: 'pdf' },
+      { id: 'dsa-book-1', nameVi: 'Giáo trình Data Structures and Algorithms (Weiss)', nameEn: 'DSA Textbook (Weiss)', kind: 'pdf' },
+      { id: 'dsa-roadmap', nameVi: 'Lộ trình học 12 tuần và chuẩn đầu ra', nameEn: '12-week learning roadmap', kind: 'slides' },
     ],
   },
   { id: 'quizzes', titleVi: 'Đề ôn luyện và Quiz', titleEn: 'Practice exercises and quizzes', items: [] },
-  { id: 'ch0', titleVi: 'Chương 1', titleEn: 'Chapter 1', items: [{ id: 'c0_1', nameVi: 'Slide bài giảng C0', nameEn: 'Lecture slides C0', kind: 'slides' }] },
-  { id: 'ch1', titleVi: 'Chương 2', titleEn: 'Chapter 2', items: [{ id: 'c1_1', nameVi: 'Slide bài giảng C1', nameEn: 'Lecture slides C1', kind: 'slides' }] },
+  {
+    id: 'ch1', titleVi: 'Chương 1: Độ phức tạp thuật toán & Con trỏ', titleEn: 'Chapter 1: Complexity & Pointers',
+    items: [
+      { id: 'dsa-ch1-slides', nameVi: 'Slide 1 - Ký pháp Big-O, Omega, Theta và phân tích đệ quy', nameEn: 'Big-O & Recursion Analysis Slides', kind: 'slides' },
+      { id: 'dsa-ch1-video', nameVi: 'Video: Con trỏ, cấp phát động và tránh rò rỉ bộ nhớ', nameEn: 'Video: Pointers & Dynamic Allocation', kind: 'video' },
+      { id: 'dsa-ch1-quiz', nameVi: 'Quiz: Độ phức tạp thuật toán & Con trỏ', nameEn: 'Quiz: Complexity & Pointers', kind: 'quiz' },
+    ],
+  },
+  {
+    id: 'ch2', titleVi: 'Chương 2: Danh sách liên kết (Linked List)', titleEn: 'Chapter 2: Linked Lists',
+    items: [
+      { id: 'dsa-ch2-slides', nameVi: 'Slide 2 - Danh sách liên kết đơn, đôi, vòng', nameEn: 'Singly, Doubly & Circular Linked Lists Slides', kind: 'slides' },
+      { id: 'dsa-ch2-video', nameVi: 'Video: Thao tác chèn, xóa node và đảo ngược danh sách', nameEn: 'Video: Insert, Delete & Reverse Linked List', kind: 'video' },
+      { id: 'dsa-ch2-quiz', nameVi: 'Quiz: Danh sách liên kết', nameEn: 'Quiz: Linked Lists', kind: 'quiz' },
+    ],
+  },
+  {
+    id: 'ch3', titleVi: 'Chương 3: Ngăn xếp (Stack) & Hàng đợi (Queue)', titleEn: 'Chapter 3: Stack & Queue',
+    items: [
+      { id: 'dsa-ch3-slides', nameVi: 'Slide 3 - Cài đặt Stack, Queue bằng mảng và con trỏ', nameEn: 'Array & Pointer Stack/Queue Implementation', kind: 'slides' },
+      { id: 'dsa-ch3-video', nameVi: 'Video: Ứng dụng Stack tính biểu thức hậu tố (Postfix)', nameEn: 'Video: Postfix Evaluation with Stack', kind: 'video' },
+      { id: 'dsa-ch3-quiz', nameVi: 'Quiz: Stack & Queue', nameEn: 'Quiz: Stack & Queue', kind: 'quiz' },
+    ],
+  },
+  {
+    id: 'ch4', titleVi: 'Chương 4: Cây & Cây nhị phân tìm kiếm (BST)', titleEn: 'Chapter 4: Trees & BST',
+    items: [
+      { id: 'dsa-ch4-slides', nameVi: 'Slide 4 - Duyệt cây NLR, LNR, LRN và cân bằng AVL', nameEn: 'Tree Traversals & AVL Balancing Slides', kind: 'slides' },
+      { id: 'dsa-ch4-video', nameVi: 'Video: Thêm, xóa node trong BST và phép xoay AVL', nameEn: 'Video: BST Operations & AVL Rotations', kind: 'video' },
+      { id: 'dsa-ch4-quiz', nameVi: 'Quiz: Cây & Cây nhị phân tìm kiếm', nameEn: 'Quiz: Trees & BST', kind: 'quiz' },
+    ],
+  },
+  {
+    id: 'ch5', titleVi: 'Chương 5: Sắp xếp, Heap & Đồ thị', titleEn: 'Chapter 5: Sorting, Heap & Graphs',
+    items: [
+      { id: 'dsa-ch5-slides', nameVi: 'Slide 5 - QuickSort, MergeSort, HeapSort, BFS/DFS & Dijkstra', nameEn: 'Sorting, Heaps & Graph Algorithms Slides', kind: 'slides' },
+      { id: 'dsa-ch5-video', nameVi: 'Video: So sánh độ phức tạp các thuật toán sắp xếp và tìm đường', nameEn: 'Video: Sorting & Shortest Path Walkthrough', kind: 'video' },
+      { id: 'dsa-ch5-quiz', nameVi: 'Quiz: Sắp xếp & Đồ thị', nameEn: 'Quiz: Sorting & Graphs', kind: 'quiz' },
+    ],
+  },
 ];
 
 export const networkCourseSections: CourseSection[] = [
@@ -131,15 +169,32 @@ export const courseOverallGrades: CourseOverallGrade[] = [
   { courseId: 'CO3093', courseCode: 'CO3093', courseTitle: 'Mạng máy tính', term: 'HK261', credits: 3, finalScore: null, maxScore: 10, letterGrade: null, status: 'in_progress' },
 ];
 
-const firstNames = ['An', 'Anh', 'Bình', 'Chi', 'Dũng', 'Dung', 'Giang', 'Hải', 'Hạnh', 'Hoa', 'Hùng', 'Huy', 'Khoa', 'Khánh', 'Lan', 'Linh', 'Long', 'Mai', 'Minh', 'My', 'Nam', 'Ngân', 'Ngọc', 'Nhân', 'Phát', 'Phong', 'Phương', 'Quân', 'Quang', 'Quỳnh', 'Thảo', 'Thiện', 'Thịnh', 'Thu', 'Trang', 'Trung', 'Tú', 'Uyên', 'Việt', 'Vy'];
+const firstNames = [
+  'An', 'Anh', 'Bình', 'Chi', 'Dũng', 'Dung', 'Giang', 'Hải', 'Hạnh', 'Hoa',
+  'Hùng', 'Huy', 'Khoa', 'Khánh', 'Lan', 'Linh', 'Long', 'Mai', 'Minh', 'My',
+  'Nam', 'Ngân', 'Ngọc', 'Nhân', 'Phát', 'Phong', 'Phương', 'Quân', 'Quang', 'Quỳnh',
+  'Thảo', 'Thiện', 'Thịnh', 'Thu', 'Trang', 'Trung', 'Tú', 'Uyên', 'Việt', 'Vy',
+  'Bảo', 'Châu', 'Đạt', 'Đức', 'Hiếu', 'Khang', 'Kiên', 'Lộc', 'Phúc', 'Tài',
+];
 const lastNames = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng', 'Huỳnh', 'Phan', 'Vũ', 'Võ', 'Đặng'];
 
-export const teacherRoster: RosterStudent[] = firstNames.map((name, index) => ({
-  id: `225${String(2001 + index).padStart(4, '0')}`,
-  name: `${lastNames[index % lastNames.length]} ${name}`,
-  status: 'active',
-  progress: 45 + (index * 11 % 56),
-}));
+export const teacherRoster: RosterStudent[] = firstNames.map((name, index) => {
+  const id = `225${String(2001 + index).padStart(4, '0')}`;
+  const fullName = `${lastNames[index % lastNames.length]} ${name}`;
+  const day = String(18 + (index % 5)).padStart(2, '0');
+  const hour = String(8 + (index % 12)).padStart(2, '0');
+  const min = String((index * 7) % 60).padStart(2, '0');
+  const sec = String((index * 13) % 60).padStart(2, '0');
+  return {
+    id,
+    name: fullName,
+    email: `sv.${id}@hcmut.edu.vn`,
+    enrolledAt: `2026-09-${String(1 + (index % 15)).padStart(2, '0')}`,
+    lastUpdatedAt: `2026-11-${day}T${hour}:${min}:${sec}+07:00`,
+    status: 'active',
+    progress: 45 + ((index * 11) % 56),
+  };
+});
 
 export const teacherGradebook: TeacherGradeRow[] = teacherRoster.map((student, index) => ({
   ...student,
@@ -172,6 +227,22 @@ export const attendanceSessions: AttendanceSession[] = [
       status: index % 15 === 0 ? 'excused' : index % 10 === 0 ? 'absent' : 'present',
     })),
   },
+  {
+    id: 'dsa-attendance-1', courseId: 'CO2003', title: 'Thực hành Danh sách liên kết & Con trỏ',
+    date: '2026-11-05', status: 'published',
+    records: teacherRoster.map((student, index) => ({
+      studentId: student.id, name: student.name,
+      status: index % 14 === 0 ? 'absent' : index % 11 === 0 ? 'late' : 'present',
+    })),
+  },
+  {
+    id: 'dsa-attendance-2', courseId: 'CO2003', title: 'Thực hành Stack, Queue & Cây BST',
+    date: '2026-11-12', status: 'published',
+    records: teacherRoster.map((student, index) => ({
+      studentId: student.id, name: student.name,
+      status: index % 16 === 0 ? 'excused' : index % 13 === 0 ? 'absent' : 'present',
+    })),
+  },
 ];
 
 export const teacherCourseTopics: TeacherCourseTopic[] = [
@@ -180,6 +251,14 @@ export const teacherCourseTopics: TeacherCourseTopic[] = [
   { id: 'topic-3', number: '03', titleVi: 'Tầng giao vận: TCP và UDP', titleEn: 'Transport layer: TCP and UDP', resources: ['Slide', 'Video', 'Quiz'] },
   { id: 'topic-4', number: '04-05', titleVi: 'Tầng mạng và liên kết dữ liệu', titleEn: 'Network and data link layers', resources: ['Slide', 'Video', 'Quiz'] },
   { id: 'topic-6', number: '06', titleVi: 'An toàn mạng', titleEn: 'Network security', resources: ['Slide', 'Video', 'Quiz'] },
+];
+
+export const dsaTeacherCourseTopics: TeacherCourseTopic[] = [
+  { id: 'dsa-topic-1', number: '01', titleVi: 'Độ phức tạp thuật toán & Con trỏ', titleEn: 'Algorithm complexity and pointers', resources: ['Slide', 'Video', 'Quiz'] },
+  { id: 'dsa-topic-2', number: '02', titleVi: 'Danh sách liên kết đơn, đôi, vòng', titleEn: 'Singly, doubly and circular linked lists', resources: ['Slide', 'Video', 'Quiz'] },
+  { id: 'dsa-topic-3', number: '03', titleVi: 'Ngăn xếp (Stack) & Hàng đợi (Queue)', titleEn: 'Stack and Queue', resources: ['Slide', 'Video', 'Quiz'] },
+  { id: 'dsa-topic-4', number: '04', titleVi: 'Cây nhị phân tìm kiếm (BST) & AVL', titleEn: 'Binary search trees and AVL', resources: ['Slide', 'Video', 'Quiz'] },
+  { id: 'dsa-topic-5', number: '05', titleVi: 'Sắp xếp, Heap & Thuật toán đồ thị', titleEn: 'Sorting, Heaps and Graph algorithms', resources: ['Slide', 'Video', 'Quiz'] },
 ];
 
 export const assignments: Assignment[] = [
@@ -202,6 +281,20 @@ export const assignments: Assignment[] = [
     description: 'Nội dung đang được giảng viên soạn.',
     dueAt: '2026-12-10T23:59:00+07:00', maxScore: 10, status: 'draft',
   },
+  {
+    id: 'dsa-asg-1', courseId: 'CO2003', title: 'Bài tập lớn 1: Cài đặt Danh sách liên kết & Stack/Queue',
+    description: 'Hiện thực lớp SinglyLinkedList và Stack/Queue ứng dụng tính giá trị biểu thức hậu tố bằng C++.',
+    dueAt: '2026-11-28T23:59:00+07:00', maxScore: 10, status: 'published',
+    submissionStatus: 'not_submitted',
+  },
+  {
+    id: 'dsa-asg-2', courseId: 'CO2003', title: 'Bài tập thực hành Cây BST & AVL',
+    description: 'Cài đặt các phép chèn, xóa, xoay trái/phải và kiểm tra độ cân bằng cây AVL.',
+    dueAt: '2026-11-12T23:59:00+07:00', maxScore: 10, status: 'published',
+    submissionStatus: 'graded', submittedAt: '2026-11-11T19:45:00+07:00',
+    score: 9.0, feedback: 'Code sạch, xử lý đầy đủ trường hợp xoay kép LR/RL.',
+    submissionText: 'Đã nộp file AVLTree.cpp và báo cáo kiểm thử.',
+  },
 ];
 
 export const courseAnnouncements: Announcement[] = [
@@ -213,7 +306,17 @@ export const courseAnnouncements: Announcement[] = [
   {
     id: 'ann-2', courseId: 'CO3093', title: 'Tài liệu ôn tập cuối kỳ',
     body: 'Tổng hợp nội dung ôn tập các chương 1 đến 6.',
-    status: 'draft', createdAt: '2026-11-12T03:00:00Z',
+    status: 'published', createdAt: '2026-11-12T03:00:00Z', publishedAt: '2026-11-12T03:00:00Z',
+  },
+  {
+    id: 'dsa-ann-1', courseId: 'CO2003', title: 'Hướng dẫn nộp Bài tập lớn 1 (Danh sách liên kết)',
+    body: 'Sinh viên kiểm tra kỹ memory leak bằng Valgrind trước khi nộp lên hệ thống.',
+    status: 'published', createdAt: '2026-11-08T02:30:00Z', publishedAt: '2026-11-08T02:30:00Z',
+  },
+  {
+    id: 'dsa-ann-2', courseId: 'CO2003', title: 'Lịch phụ đạo Cây AVL và Đồ thị trước kỳ thi',
+    body: 'Giảng viên mở buổi phụ đạo trực tuyến vào 19h00 thứ Sáu tuần này.',
+    status: 'published', createdAt: '2026-11-15T04:00:00Z', publishedAt: '2026-11-15T04:00:00Z',
   },
 ];
 

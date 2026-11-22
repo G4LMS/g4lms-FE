@@ -22,11 +22,11 @@ export const studentCourses: StudentCourse[] = [
 ];
 
 export const teacherCourses: TeacherCourse[] = [
-  { id: 'CO2003', code: 'CO2003', title: 'Cấu trúc dữ liệu và giải thuật (CO2003)', faculty: 'Khoa Khoa học Ứng dụng', students: 42, pending: 6, published: true, nodesWithContent: 71, totalNodes: 82, theme: 'blue' },
+  { id: 'CO2003', code: 'CO2003', title: 'Cấu trúc dữ liệu và giải thuật (CO2003)', faculty: 'Khoa Khoa học Ứng dụng', students: 50, pending: 6, published: true, nodesWithContent: 71, totalNodes: 82, theme: 'blue' },
   { id: 'CO2003-L03', code: 'CO2003-L03', title: 'Cấu trúc dữ liệu và giải thuật – Lớp mới (CO2003-L03)', faculty: 'Khoa Khoa học Ứng dụng', students: 0, published: false, nodesWithContent: 0, totalNodes: 0, theme: 'orange' },
   { id: 'CO1007', code: 'CO1007', title: 'Toán rời rạc (CO1007)', faculty: 'Khoa Khoa học Ứng dụng', students: 64, published: true, nodesWithContent: 30, totalNodes: 30, theme: 'slate' },
   { id: 'MT2013', code: 'MT2013', title: 'Xác suất thống kê (MT2013)', faculty: 'Khoa Khoa học Ứng dụng', students: 38, published: true, nodesWithContent: 20, totalNodes: 40, theme: 'green' },
-  { id: 'CO3093', code: 'CO3093', title: 'Mạng máy tính (CO3093)', faculty: 'Khoa Khoa học Máy tính', students: 56, pending: 4, published: true, nodesWithContent: 86, totalNodes: 112, theme: 'blue' },
+  { id: 'CO3093', code: 'CO3093', title: 'Mạng máy tính (CO3093)', faculty: 'Khoa Khoa học Máy tính', students: 50, pending: 4, published: true, nodesWithContent: 86, totalNodes: 112, theme: 'blue' },
 ];
 
 export const learningOutcomes: LearningOutcome[] = [
