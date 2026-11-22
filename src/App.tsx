@@ -24,6 +24,9 @@ import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import AdminEnrollmentsPage from './pages/AdminEnrollmentsPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import StudentNodeLearnPage from './pages/StudentNodeLearnPage';
+import StudentPreferencesPage from './pages/StudentPreferencesPage';
+import TeacherAdaptiveSettingsPage from './pages/TeacherAdaptiveSettingsPage';
 import type { Role } from './types';
 import type { ReactNode } from 'react';
 
@@ -56,6 +59,7 @@ export default function App() {
       <Route path="/home" element={<SignedIn><HomePage /></SignedIn>} />
       <Route path="/dashboard" element={<SignedIn><DashboardPage /></SignedIn>} />
       <Route path="/messages" element={<SignedIn><MessagesPage /></SignedIn>} />
+      <Route path="/preferences" element={<Guard role="student"><StudentPreferencesPage /></Guard>} />
       <Route path="/admin" element={<Guard role="admin"><AdminDashboardPage /></Guard>} />
       <Route path="/admin/users" element={<Guard role="admin"><AdminUsersPage /></Guard>} />
       <Route path="/admin/enrollments" element={<Guard role="admin"><AdminEnrollmentsPage /></Guard>} />
@@ -68,6 +72,7 @@ export default function App() {
       <Route path="/courses/:courseId/attendance" element={<Guard role="student"><CourseAttendancePage /></Guard>} />
       <Route path="/courses/:courseId/quizzes/:quizId" element={<Guard role="student"><StudentQuizPage /></Guard>} />
       <Route path="/courses/:courseId/graph" element={<Guard role="student"><StudentCourseGraphPage /></Guard>} />
+      <Route path="/courses/:courseId/learn/:nodeId" element={<Guard role="student"><StudentNodeLearnPage /></Guard>} />
       <Route path="/courses/:courseId/:tab" element={<Guard role="student"><StudentCourseDetailPage /></Guard>} />
       <Route path="/teacher/courses" element={<Guard role="teacher"><TeacherCoursesPage /></Guard>} />
       <Route path="/profile/teacher" element={<Guard role="teacher"><TeacherProfilePage /></Guard>} />
@@ -77,6 +82,7 @@ export default function App() {
       <Route path="/teacher/courses/:courseId/attendance" element={<Guard role="teacher"><CourseAttendancePage /></Guard>} />
       <Route path="/teacher/courses/:courseId/files" element={<Guard role="teacher"><CourseFilesPage /></Guard>} />
       <Route path="/teacher/courses/:courseId/graph" element={<Guard role="teacher"><TeacherCourseGraphPage /></Guard>} />
+      <Route path="/teacher/courses/:courseId/adaptive" element={<Guard role="teacher"><TeacherAdaptiveSettingsPage /></Guard>} />
       <Route path="/teacher/courses/:courseId/:tab" element={<Guard role="teacher"><TeacherCourseDetailPage /></Guard>} />
       <Route path="/teacher/courses/:courseId/nodes/:nodeId" element={<Guard role="teacher"><TeacherNodeEditorPage /></Guard>} />
       <Route path="*" element={<Navigate to="/login" replace />} />

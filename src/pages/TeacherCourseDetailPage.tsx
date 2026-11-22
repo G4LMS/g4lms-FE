@@ -1,8 +1,9 @@
-import { Search, Users } from 'lucide-react';
+import { Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, FileText, FolderOpen, Plus, Search, SlidersHorizontal, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
+import { CourseIndexSidebar } from '../features/courses/CourseIndexSidebar';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
 import type { RosterStudent, TeacherCourseTopic, TeacherGradeRow } from '../types';
@@ -10,13 +11,7 @@ import type { RosterStudent, TeacherCourseTopic, TeacherGradeRow } from '../type
 const TABS = [
   ['graph', 'Lộ trình'],
   ['content', 'Nội dung'],
-  ['announcements', 'Thông báo'],
   ['students', 'Học viên'],
-  ['grades', 'Điểm số'],
-  ['assignments', 'Bài tập'],
-  ['quizzes', 'Quiz'],
-  ['attendance', 'Điểm danh'],
-  ['files', 'Tệp'],
 ] as const;
 
 export default function TeacherCourseDetailPage() {
@@ -24,6 +19,20 @@ export default function TeacherCourseDetailPage() {
   const nav = useNavigate();
   const { language } = useLanguage();
   const [query, setQuery] = useState('');
+  const [progressFilter, setProgressFilter] = useState<'all' | 'good' | 'mid' | 'low'>('all');
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({ materials: true, overview: true, ch1: true });
+  const [customSections, setCustomSections] = useState<Array<{ id: string; titleVi: string; titleEn: string }>>(() => {
+    try {
+      const raw = localStorage.getItem(`g4lms.customSections.${courseId}`);
+      if (raw) return JSON.parse(raw) as Array<{ id: string; titleVi: string; titleEn: string }>;
+    } catch { /* ignore */ }
+    return [];
+  });
+  const [addingSection, setAddingSection] = useState(false);
+  const [newSectionTitle, setNewSectionTitle] = useState('');
+  const [studentSubTab, setStudentSubTab] = useState<'overview' | 'gradebook' | 'attendance'>(
+    tab === 'grades' ? 'gradebook' : 'overview',
+  );
   const isVi = language === 'vi';
   const { data: courseData, error: coursesError } = useAsync(() => api.getTeacherCourses(), []);
   const { data: rosterData, loading: rosterLoading, error: rosterError } =
@@ -32,6 +41,16 @@ export default function TeacherCourseDetailPage() {
     useAsync<TeacherGradeRow[]>(() => api.getTeacherGradebook(courseId), [courseId]);
   const { data: topicData, loading: topicsLoading, error: topicsError } =
     useAsync<TeacherCourseTopic[]>(() => api.getTeacherCourseTopics(courseId), [courseId]);
+  const { data: sectionData } =
+    useAsync(() => api.getCourseSections(courseId).catch(() => []), [courseId]);
+  const { data: attendanceData } =
+    useAsync(() => api.getTeacherAttendance(courseId).catch(() => []), [courseId]);
+  const { data: assignmentsData } =
+    useAsync(() => api.getAssignments(courseId, 'teacher').catch(() => []), [courseId]);
+  const { data: quizzesData } =
+    useAsync(() => api.getQuizzes(courseId, 'teacher').catch(() => []), [courseId]);
+  const { data: filesData } =
+    useAsync(() => api.getCourseFiles(courseId).catch(() => []), [courseId]);
 
   const roster = rosterData ?? [];
   const [gradebook, setGradebook] = useState<TeacherGradeRow[]>([]);
@@ -45,6 +64,30 @@ export default function TeacherCourseDetailPage() {
   const [gradeMessage, setGradeMessage] = useState('');
   const [gradeError, setGradeError] = useState('');
   const [savingGrade, setSavingGrade] = useState(false);
+
+  const defaultWeights = { midterm: 30, project: 25, final: 35, attendance: 10 };
+  const [weights, setWeights] = useState(() => {
+    try {
+      const raw = localStorage.getItem(`g4lms.gradeWeights.${courseId}`);
+      if (raw) return { ...defaultWeights, ...(JSON.parse(raw) as typeof defaultWeights) };
+    } catch { /* ignore */ }
+    return defaultWeights;
+  });
+  const [weightDraft, setWeightDraft] = useState(weights);
+  const [editingWeights, setEditingWeights] = useState(false);
+
+  const computeTotal = (row: TeacherGradeRow): number | null => {
+    if (row.midterm == null || row.project == null || row.final == null || row.attendance == null) {
+      return row.totalScore;
+    }
+    return Number((
+      (row.midterm * weights.midterm +
+        row.project * weights.project +
+        row.final * weights.final +
+        (row.attendance / 10) * weights.attendance) /
+      100
+    ).toFixed(1));
+  };
 
   useEffect(() => {
     if (gradebookData) setGradebook(gradebookData);
@@ -67,17 +110,7 @@ export default function TeacherCourseDetailPage() {
     nav(
       id === 'graph'
         ? `/teacher/courses/${courseId}/graph`
-        : id === 'assignments'
-          ? `/teacher/courses/${courseId}/assignments`
-          : id === 'announcements'
-            ? `/teacher/courses/${courseId}/announcements`
-            : id === 'quizzes'
-              ? `/teacher/courses/${courseId}/quizzes`
-              : id === 'attendance'
-                ? `/teacher/courses/${courseId}/attendance`
-                : id === 'files'
-                  ? `/teacher/courses/${courseId}/files`
-                  : `/teacher/courses/${courseId}/${id}`,
+        : `/teacher/courses/${courseId}/${id}`,
     );
   };
 
@@ -122,113 +155,498 @@ export default function TeacherCourseDetailPage() {
   return (
     <div className="page course-detail-page teacher-course-detail">
       <AppHeader />
+      <CourseIndexSidebar courseId={courseId} role="teacher" />
       <main className="container course-detail-content">
         <h1>{courseName}</h1>
         {coursesError && <p className="form-error" role="alert">{coursesError.message}</p>}
         <div className="tabs-pill course-detail-tabs">
           {TABS.map(([id, label]) => (
-            <button key={id} className={tab === id ? 'on' : ''} onClick={() => selectTab(id)}>
+            <button
+              key={id}
+              className={tab === id || (id === 'students' && tab === 'grades') ? 'on' : ''}
+              onClick={() => selectTab(id)}
+            >
               {isVi
                 ? label
                 : ({
                     graph: 'Path',
                     content: 'Content',
-                    announcements: 'Announcements',
                     students: 'Students',
-                    grades: 'Grades',
-                    assignments: 'Assignments',
-                    quizzes: 'Quizzes',
-                    attendance: 'Attendance',
-                    files: 'Files',
                   } as Record<string, string>)[id]}
             </button>
           ))}
         </div>
 
         {tab === 'content' && (
-          <section className="teacher-content-card">
-            <h2>{isVi ? `Nội dung khóa học ${courseId}` : `${courseId} course content`}</h2>
+          <div className="course-detail-sections">
+            <section className="course-activity-section" aria-labelledby="teacher-activity-heading">
+              <h2 id="teacher-activity-heading">{isVi ? 'Hoạt động môn học' : 'Course activities'}</h2>
+              <div className="course-activity-links">
+                <Link to={`/teacher/courses/${courseId}/announcements`}>
+                  <Bell size={17} />{isVi ? 'Quản lý Thông báo' : 'Manage Announcements'}<ChevronRight size={15} />
+                </Link>
+                <Link to={`/teacher/courses/${courseId}/attendance`}>
+                  <CalendarCheck size={17} />{isVi ? 'Quản lý Điểm danh' : 'Manage Attendance'}<ChevronRight size={15} />
+                </Link>
+                <Link to={`/teacher/courses/${courseId}/adaptive`}>
+                  <SlidersHorizontal size={17} />{isVi ? 'Cài đặt thích ứng' : 'Adaptive settings'}<ChevronRight size={15} />
+                </Link>
+              </div>
+            </section>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-primary sm"
+                onClick={() => setAddingSection((v) => !v)}
+              >
+                <Plus size={13} /> {isVi ? 'Thêm chương / khung mới' : 'Add chapter / section'}
+              </button>
+              <button type="button" className="course-collapse-all" onClick={() => setOpenSections({})}>
+                {isVi ? 'Thu gọn toàn bộ' : 'Collapse all'}
+              </button>
+            </div>
+
+            {addingSection && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 12, borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg)' }}>
+                <input
+                  type="text"
+                  value={newSectionTitle}
+                  onChange={(e) => setNewSectionTitle(e.target.value)}
+                  placeholder={isVi ? 'Ví dụ: Chương 6: Thuật toán nâng cao...' : 'e.g. Chapter 6: Advanced Algorithms...'}
+                  style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary sm"
+                  disabled={!newSectionTitle.trim()}
+                  onClick={() => {
+                    const title = newSectionTitle.trim();
+                    if (!title) return;
+                    const id = `ch-custom-${Date.now()}`;
+                    const next = [...customSections, { id, titleVi: title, titleEn: title }];
+                    setCustomSections(next);
+                    try {
+                      localStorage.setItem(`g4lms.customSections.${courseId}`, JSON.stringify(next));
+                    } catch { /* ignore */ }
+                    setOpenSections((c) => ({ ...c, [id]: true }));
+                    setNewSectionTitle('');
+                    setAddingSection(false);
+                  }}
+                >
+                  {isVi ? 'Tạo khung' : 'Create'}
+                </button>
+                <button type="button" className="btn btn-outline sm" onClick={() => setAddingSection(false)}>
+                  {isVi ? 'Hủy' : 'Cancel'}
+                </button>
+              </div>
+            )}
+
+            {/* Các khung nội dung môn học (Tài liệu + từng Chương tích hợp Bài tập, Quiz, Tệp) */}
             {topicsError && <p className="form-error" role="alert">{topicsError.message}</p>}
             {topicsLoading && <p className="muted">{isVi ? 'Đang tải nội dung...' : 'Loading course content...'}</p>}
-            <div className="teacher-content-list">
-              {topics.map((topic) => (
-                <div key={topic.id}>
-                  <b>{topic.number}</b>
-                  <span>
-                    {isVi ? topic.titleVi : topic.titleEn}
-                    <small>{topic.resources.join(' · ')}</small>
-                  </span>
+            {(() => {
+              const contentSections = [
+                ...(sectionData ?? []).filter((s) => !['announcements', 'assignments', 'quizzes'].includes(s.id)),
+                ...customSections.map((c) => ({ ...c, items: [] })),
+              ];
+              const chapterSections = contentSections.filter((s) => s.id !== 'materials' && s.id !== 'overview');
+              const allAssignments = assignmentsData ?? [];
+              const allQuizzes = quizzesData ?? [];
+              const allFiles = filesData ?? [];
+
+              return contentSections.map((section) => {
+                const open = !!openSections[section.id];
+                const chIdx = chapterSections.findIndex((c) => c.id === section.id);
+                const isChapter = chIdx >= 0;
+
+                const chapterAssignments = isChapter
+                  ? allAssignments.filter((_, i) => i % Math.max(1, chapterSections.length) === chIdx)
+                  : [];
+                const chapterQuizzes = isChapter
+                  ? allQuizzes.filter((qz, i) => {
+                      const numMatch = section.id.match(/\d+/)?.[0];
+                      if (numMatch && (qz.id.includes(`ch${numMatch}`) || qz.title.toLowerCase().includes(`quiz ${numMatch}`))) {
+                        return true;
+                      }
+                      return i % Math.max(1, chapterSections.length) === chIdx;
+                    })
+                  : [];
+                const chapterFiles =
+                  section.id === 'materials' || section.id === 'overview'
+                    ? allFiles
+                    : [];
+
+                return (
+                  <div className="course-detail-section" key={section.id}>
+                    <button
+                      type="button"
+                      className="course-detail-section-head"
+                      aria-expanded={open}
+                      onClick={() => setOpenSections((c) => ({ ...c, [section.id]: !c[section.id] }))}
+                    >
+                      <span className="course-section-title">
+                        {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                        {isVi ? section.titleVi : section.titleEn}
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="course-resource-list">
+                        {section.items
+                          .filter((item) => item.kind !== 'quiz')
+                          .map((item) => (
+                            <div key={item.id} className="course-resource">
+                              <FileText size={16} />
+                              <span>{isVi ? item.nameVi : item.nameEn}</span>
+                              <small>{item.kind.toUpperCase()}</small>
+                            </div>
+                          ))}
+                        {chapterFiles.map((f) => (
+                          <Link to={`/teacher/courses/${courseId}/files`} key={f.id} className="course-resource">
+                            <FolderOpen size={16} />
+                            <span>{f.name}</span>
+                            <small>{Math.max(1, Math.round(f.sizeBytes / 1024))} KB</small>
+                          </Link>
+                        ))}
+                        {chapterAssignments.map((asg) => (
+                          <Link to={`/teacher/courses/${courseId}/assignments`} key={asg.id} className="course-resource">
+                            <ClipboardList size={16} />
+                            <span>{asg.title}</span>
+                            <small>{asg.status === 'published' ? (isVi ? 'Bài tập · Đã công bố' : 'Assignment · Published') : (isVi ? 'Bài tập · Nháp' : 'Assignment · Draft')}</small>
+                          </Link>
+                        ))}
+                        {chapterQuizzes.map((qz) => (
+                          <Link to={`/teacher/courses/${courseId}/quizzes`} key={qz.id} className="course-resource">
+                            <FileText size={16} />
+                            <span>{qz.title}</span>
+                            <small>Quiz · {qz.questions.length} câu · {qz.timeLimitMinutes}p</small>
+                          </Link>
+                        ))}
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingTop: 6 }}>
+                          <Link to={`/teacher/courses/${courseId}/assignments`} className="btn btn-outline sm">
+                            {isVi ? '+ Thêm Bài tập' : '+ Add Assignment'}
+                          </Link>
+                          <Link to={`/teacher/courses/${courseId}/quizzes`} className="btn btn-outline sm">
+                            {isVi ? '+ Thêm Quiz' : '+ Add Quiz'}
+                          </Link>
+                          <Link to={`/teacher/courses/${courseId}/files`} className="btn btn-outline sm">
+                            {isVi ? '+ Tải Tệp / Slide' : '+ Upload File'}
+                          </Link>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+
+            {!(sectionData ?? []).some((s) => s.id.startsWith('ch')) &&
+              topics.map((topic) => (
+                <div className="course-detail-section" key={topic.id}>
+                  <div className="course-detail-section-head">
+                    <span className="course-section-title">
+                      <b>{topic.number}</b> · {isVi ? topic.titleVi : topic.titleEn}
+                    </span>
+                    <small className="muted-s">{topic.resources.join(' · ')}</small>
+                  </div>
                 </div>
               ))}
-            </div>
-          </section>
+          </div>
         )}
 
-        {tab === 'students' && (
+        {(tab === 'students' || tab === 'grades') && (
           <section className="teacher-students-card">
-            <div className="teacher-students-heading">
-              <div>
+            <div className="teacher-students-heading" style={{ flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <Users size={18} />
                 <strong>
-                  {isVi ? 'Danh sách học viên ghi danh' : 'Enrolled student roster'} · {roster.length}
+                  {isVi ? 'Học viên' : 'Students'} · {roster.length}
                 </strong>
+                <div className="tabs-pill" style={{ marginLeft: 8 }}>
+                  <button
+                    type="button"
+                    className={studentSubTab === 'overview' ? 'on' : ''}
+                    onClick={() => setStudentSubTab('overview')}
+                  >
+                    {isVi ? 'Tiến độ học tập' : 'Learning progress'}
+                  </button>
+                  <button
+                    type="button"
+                    className={studentSubTab === 'gradebook' ? 'on' : ''}
+                    onClick={() => setStudentSubTab('gradebook')}
+                  >
+                    {isVi ? 'Bảng điểm chi tiết' : 'Gradebook'}
+                  </button>
+                  <button
+                    type="button"
+                    className={studentSubTab === 'attendance' ? 'on' : ''}
+                    onClick={() => setStudentSubTab('attendance')}
+                  >
+                    {isVi ? 'Điểm danh' : 'Attendance'} ({(attendanceData ?? []).length})
+                  </button>
+                </div>
               </div>
-              <label>
-                <Search size={14} />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder={isVi ? 'Tìm học viên theo mã, tên, email...' : 'Search students...'}
-                />
-              </label>
-            </div>
-            {rosterError && <p className="form-error" role="alert">{rosterError.message}</p>}
-            {rosterLoading && <p className="muted">{isVi ? 'Đang tải danh sách...' : 'Loading roster...'}</p>}
-            <div className="teacher-students-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{isVi ? 'Mã học viên' : 'Student ID'}</th>
-                    <th>{isVi ? 'Họ và tên' : 'Full name'}</th>
-                    <th>Email</th>
-                    <th>{isVi ? 'Ngày ghi danh' : 'Enrolled at'}</th>
-                    <th>{isVi ? 'Tình trạng' : 'Status'}</th>
-                    <th>{isVi ? 'Tiến độ hoàn thiện lộ trình' : 'Learning path progress'}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {students.map((student) => (
-                    <tr key={student.id}>
-                      <td>{student.id}</td>
-                      <td><strong>{student.name}</strong></td>
-                      <td>{student.email ?? '—'}</td>
-                      <td>
-                        {student.enrolledAt
-                          ? new Date(student.enrolledAt).toLocaleDateString(isVi ? 'vi-VN' : 'en-US')
-                          : '—'}
-                      </td>
-                      <td>
-                        <span className="student-status">
-                          {isVi ? (student.status === 'active' ? 'Đang học' : 'Đã rút') : student.status}
-                        </span>
-                      </td>
-                      <td><span className="student-progress">{student.progress}%</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!rosterLoading && !rosterError && !students.length && (
-                <p className="course-empty-section">{isVi ? 'Không tìm thấy học viên.' : 'No students found.'}</p>
+              {studentSubTab !== 'attendance' && (
+                <label>
+                  <Search size={14} />
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={isVi ? 'Tìm học viên theo mã, tên, email...' : 'Search students...'}
+                  />
+                </label>
               )}
             </div>
-          </section>
-        )}
 
-        {tab === 'grades' && (
-          <section className="teacher-grades-card">
-            <div className="teacher-students-heading">
-              <div><strong>{isVi ? 'Bảng điểm toàn lớp' : 'Class gradebook'}</strong></div>
+            {studentSubTab === 'overview' && (() => {
+              const totalConcepts = courseId === 'CO3093' ? 28 : 24;
+              const avgProgress = roster.length
+                ? Math.round(roster.reduce((sum, s) => sum + s.progress, 0) / roster.length)
+                : 0;
+              const goodCount = roster.filter((s) => s.progress >= 80).length;
+              const midCount = roster.filter((s) => s.progress >= 50 && s.progress < 80).length;
+              const lowCount = roster.filter((s) => s.progress < 50).length;
+              const filteredProgressStudents = students.filter((s) => {
+                if (progressFilter === 'good') return s.progress >= 80;
+                if (progressFilter === 'mid') return s.progress >= 50 && s.progress < 80;
+                if (progressFilter === 'low') return s.progress < 50;
+                return true;
+              });
+              const weakConcepts = courseId === 'CO3093'
+                ? ['TCP Congestion Control', 'Subnets & CIDR', 'DNS Caching', 'Link-State Routing']
+                : ['Cấp phát động & Con trỏ', 'Xóa node Danh sách liên kết', 'Phép xoay cây AVL', 'Dijkstra'];
+
+              return (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, padding: '12px 0' }}>
+                    <div style={{ padding: '10px 14px', borderRadius: 8, background: '#f8fafc', border: '1px solid var(--line)' }}>
+                      <div className="muted-xs">{isVi ? 'Sĩ số lớp' : 'Class size'}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--ink)' }}>{roster.length}</div>
+                    </div>
+                    <div style={{ padding: '10px 14px', borderRadius: 8, background: '#f0f9ff', border: '1px solid #bae6fd' }}>
+                      <div className="muted-xs">{isVi ? 'Tiến độ trung bình' : 'Average progress'}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: '#0369a1' }}>{avgProgress}%</div>
+                    </div>
+                    <div style={{ padding: '10px 14px', borderRadius: 8, background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
+                      <div className="muted-xs">{isVi ? 'Hoàn thành tốt (≥ 80%)' : 'On track (≥ 80%)'}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: '#047857' }}>{goodCount}</div>
+                    </div>
+                    <div style={{ padding: '10px 14px', borderRadius: 8, background: '#fff1f2', border: '1px solid #fecdd3' }}>
+                      <div className="muted-xs">{isVi ? 'Cần hỗ trợ (< 50%)' : 'Needs support (< 50%)'}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: '#be123c' }}>{lowCount}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                    {(
+                      [
+                        ['all', `${isVi ? 'Tất cả' : 'All'} (${roster.length})`],
+                        ['good', `${isVi ? 'Tốt ≥ 80%' : 'Good ≥ 80%'} (${goodCount})`],
+                        ['mid', `${isVi ? 'Đang học 50–79%' : 'In progress 50–79%'} (${midCount})`],
+                        ['low', `${isVi ? 'Cần hỗ trợ < 50%' : 'Needs help < 50%'} (${lowCount})`],
+                      ] as const
+                    ).map(([k, lbl]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        className={`btn sm ${progressFilter === k ? 'btn-primary' : 'btn-outline'}`}
+                        onClick={() => setProgressFilter(k)}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+
+                  {rosterError && <p className="form-error" role="alert">{rosterError.message}</p>}
+                  {rosterLoading && <p className="muted">{isVi ? 'Đang tải danh sách...' : 'Loading roster...'}</p>}
+                  <div className="teacher-students-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>{isVi ? 'Mã SV' : 'ID'}</th>
+                          <th>{isVi ? 'Họ và tên' : 'Full name'}</th>
+                          <th style={{ width: 95 }}>{isVi ? 'Tiến độ' : 'Progress'}</th>
+                          <th>{isVi ? 'Khái niệm đạt' : 'Concepts mastered'}</th>
+                          <th>{isVi ? 'Khái niệm cần ôn' : 'Concept to review'}</th>
+                          <th>{isVi ? 'Mức độ' : 'Status'}</th>
+                          <th>{isVi ? 'Thời điểm cập nhật' : 'Last synced'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredProgressStudents.map((student, idx) => {
+                          const masteredCount = Math.round((student.progress / 100) * totalConcepts);
+                          const barColor = student.progress >= 80 ? '#16a34a' : student.progress >= 50 ? '#0284c7' : '#dc2626';
+                          const statusLabel =
+                            student.progress >= 80
+                              ? (isVi ? 'Hoàn thành tốt' : 'Mastered')
+                              : student.progress >= 50
+                                ? (isVi ? 'Đúng tiến độ' : 'On track')
+                                : (isVi ? 'Cần hỗ trợ' : 'Needs help');
+                          const formatDateTime = (iso?: string) => {
+                            if (!iso) return '—';
+                            const d = new Date(iso);
+                            if (Number.isNaN(d.getTime())) return '—';
+                            const pad = (n: number) => String(n).padStart(2, '0');
+                            return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                          };
+                          return (
+                            <tr key={student.id}>
+                              <td>{student.id}</td>
+                              <td>
+                                <strong>{student.name}</strong>
+                                <div className="muted-xs">{student.email ?? '—'}</div>
+                              </td>
+                              <td style={{ width: 95 }}>
+                                <b style={{ color: barColor }}>{student.progress}%</b>
+                              </td>
+                              <td>{masteredCount}/{totalConcepts}</td>
+                              <td>
+                                {student.progress < 75 ? (
+                                  <span className="muted-s" style={{ color: '#b45309' }}>
+                                    {weakConcepts[idx % weakConcepts.length]}
+                                  </span>
+                                ) : (
+                                  <span className="muted-xs">—</span>
+                                )}
+                              </td>
+                              <td>
+                                <span
+                                  className="pill-badge"
+                                  style={{ color: barColor, borderColor: barColor }}
+                                >
+                                  {statusLabel}
+                                </span>
+                              </td>
+                              <td className="muted-s" style={{ whiteSpace: 'nowrap' }}>
+                                {formatDateTime(student.lastUpdatedAt)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {!rosterLoading && !rosterError && !filteredProgressStudents.length && (
+                      <p className="course-empty-section">{isVi ? 'Không tìm thấy học viên.' : 'No students found.'}</p>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+
+            {studentSubTab === 'attendance' && (
+              <div style={{ padding: '12px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <span className="muted-s">
+                    {isVi
+                      ? `Tổng hợp ${(attendanceData ?? []).length} buổi điểm danh của lớp`
+                      : `${(attendanceData ?? []).length} attendance sessions`}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-primary sm"
+                    onClick={() => nav(`/teacher/courses/${courseId}/attendance`)}
+                  >
+                    <CalendarCheck size={13} /> {isVi ? 'Mở trang điểm danh chi tiết →' : 'Open attendance manager →'}
+                  </button>
+                </div>
+                <div className="teacher-students-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{isVi ? 'Buổi học' : 'Session'}</th>
+                        <th>{isVi ? 'Ngày' : 'Date'}</th>
+                        <th>{isVi ? 'Trạng thái' : 'Status'}</th>
+                        <th>{isVi ? 'Có mặt' : 'Present'}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(attendanceData ?? []).map((s) => {
+                        const presentCount = s.records.filter((r) => r.status === 'present').length;
+                        return (
+                          <tr key={s.id}>
+                            <td><strong>{s.title}</strong></td>
+                            <td>{s.date}</td>
+                            <td>{s.status === 'published' ? (isVi ? 'Đã công bố' : 'Published') : (isVi ? 'Nháp' : 'Draft')}</td>
+                            <td>{presentCount}/{s.records.length}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {studentSubTab === 'gradebook' && (
+              <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: '8px 0 12px' }}>
+              <span className="muted-s">
+                {isVi
+                  ? `Trọng số hiện tại: Giữa kỳ ${weights.midterm}% · BTL ${weights.project}% · Cuối kỳ ${weights.final}% · Điểm danh ${weights.attendance}%`
+                  : `Weights: Midterm ${weights.midterm}% · Project ${weights.project}% · Final ${weights.final}% · Attendance ${weights.attendance}%`}
+              </span>
+              <button
+                type="button"
+                className="btn btn-outline sm"
+                onClick={() => {
+                  setWeightDraft(weights);
+                  setEditingWeights((v) => !v);
+                }}
+              >
+                <SlidersHorizontal size={13} /> {editingWeights ? (isVi ? 'Đóng chỉnh trọng số' : 'Close weights') : (isVi ? 'Chỉnh trọng số điểm' : 'Edit grade weights')}
+              </button>
             </div>
+
+            {editingWeights && (
+              <div style={{ padding: 12, borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg)', marginBottom: 12, display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+                {(
+                  [
+                    ['midterm', isVi ? 'Giữa kỳ (%)' : 'Midterm (%)'],
+                    ['project', isVi ? 'BTL (%)' : 'Project (%)'],
+                    ['final', isVi ? 'Cuối kỳ (%)' : 'Final (%)'],
+                    ['attendance', isVi ? 'Điểm danh (%)' : 'Attendance (%)'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, fontWeight: 600 }}>
+                    <span>{label}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={weightDraft[key]}
+                      onChange={(e) => setWeightDraft((w) => ({ ...w, [key]: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
+                      style={{ width: 82, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
+                    />
+                  </label>
+                ))}
+                {(() => {
+                  const sum = weightDraft.midterm + weightDraft.project + weightDraft.final + weightDraft.attendance;
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: sum === 100 ? 'var(--green)' : 'var(--red)' }}>
+                        Tổng: {sum}%
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-primary sm"
+                        disabled={sum !== 100}
+                        onClick={() => {
+                          setWeights(weightDraft);
+                          try {
+                            localStorage.setItem(`g4lms.gradeWeights.${courseId}`, JSON.stringify(weightDraft));
+                          } catch { /* ignore */ }
+                          setEditingWeights(false);
+                          setGradeMessage(isVi ? 'Đã cập nhật trọng số điểm và tính lại điểm tổng kết.' : 'Updated grade weights.');
+                        }}
+                      >
+                        {isVi ? 'Lưu trọng số' : 'Save weights'}
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             {gradebookError && <p className="form-error" role="alert">{gradebookError.message}</p>}
             {gradeError && <p className="form-error" role="alert">{gradeError}</p>}
             {gradeMessage && <p className="admin-success" role="status">{gradeMessage}</p>}
@@ -239,10 +657,10 @@ export default function TeacherCourseDetailPage() {
                   <tr>
                     <th>{isVi ? 'Mã SV' : 'Student ID'}</th>
                     <th>{isVi ? 'Họ tên' : 'Name'}</th>
-                    <th>{isVi ? 'Giữa kỳ (30%)' : 'Midterm (30%)'}</th>
-                    <th>BTL (25%)</th>
-                    <th>{isVi ? 'Cuối kỳ (35%)' : 'Final (35%)'}</th>
-                    <th>{isVi ? 'Điểm danh (10%)' : 'Attendance (10%)'}</th>
+                    <th>{isVi ? `Giữa kỳ (${weights.midterm}%)` : `Midterm (${weights.midterm}%)`}</th>
+                    <th>BTL ({weights.project}%)</th>
+                    <th>{isVi ? `Cuối kỳ (${weights.final}%)` : `Final (${weights.final}%)`}</th>
+                    <th>{isVi ? `Điểm danh (${weights.attendance}%)` : `Attendance (${weights.attendance}%)`}</th>
                     <th>{isVi ? 'Tổng' : 'Total'}</th>
                     <th>{isVi ? 'Thao tác' : 'Action'}</th>
                   </tr>
@@ -315,7 +733,7 @@ export default function TeacherCourseDetailPage() {
                           )}
                         </td>
                         <td>
-                          <strong>{student.totalScore === null ? '—' : student.totalScore.toFixed(1)}</strong>
+                          <strong>{(() => { const t = computeTotal(student); return t === null ? '—' : t.toFixed(1); })()}</strong>
                         </td>
                         <td>
                           {isEditing ? (
@@ -352,6 +770,8 @@ export default function TeacherCourseDetailPage() {
                 </tbody>
               </table>
             </div>
+              </>
+            )}
           </section>
         )}
       </main>

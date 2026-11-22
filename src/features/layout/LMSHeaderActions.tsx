@@ -8,6 +8,7 @@ import {
   GraduationCap,
   LogOut,
   MessageSquare,
+  SlidersHorizontal,
   User,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -238,6 +239,9 @@ export default function LMSHeaderActions() {
               <>
                 <MenuLink icon={<GraduationCap size={14} />} onClick={openGrades}>{language === 'vi' ? 'Điểm' : 'Grades'}</MenuLink>
                 <MenuLink icon={<Calendar size={14} />} onClick={() => { setOpenMenu(null); nav('/dashboard'); }}>{language === 'vi' ? 'Thời khoá biểu (TKB)' : 'Timetable'}</MenuLink>
+                {user?.role === 'student' && (
+                  <MenuLink icon={<SlidersHorizontal size={14} />} onClick={() => { setOpenMenu(null); nav('/preferences'); }}>{language === 'vi' ? 'Sở thích học tập' : 'Learning preferences'}</MenuLink>
+                )}
               </>
             )}
             <div className="header-language-section">

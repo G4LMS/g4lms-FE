@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, Edit3, FileText, Sigma, Users } from 'lucide-react';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
+import { CourseIndexSidebar } from '../features/courses/CourseIndexSidebar';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
 import { LearningProfile } from '../features/learning-profile/LearningProfile';
@@ -23,8 +24,16 @@ export default function StudentCourseDetailPage() {
     useAsync<CourseSection[]>(() => api.getCourseSections(courseId), [courseId]);
   const { data: gradeData, loading: gradesLoading, error: gradesError } =
     useAsync(() => api.getStudentGrades(courseId), [courseId]);
-  const sections = sectionData ?? [];
+  const { data: assignmentsData } =
+    useAsync(() => api.getAssignments(courseId, 'student').catch(() => []), [courseId]);
+  const { data: quizzesData } =
+    useAsync(() => api.getQuizzes(courseId, 'student').catch(() => []), [courseId]);
+  const sections = (sectionData ?? []).filter((s) => s.id !== 'announcements');
   const grades = gradeData ?? [];
+  const courseAssignments = assignmentsData ?? [];
+  const courseQuizzes = quizzesData ?? [];
+  const hasAssignmentsSection = sections.some((s) => s.id === 'assignments');
+  const hasQuizzesSection = sections.some((s) => s.id === 'quizzes');
   const courseName = courseData?.find((course) => course.id === courseId)?.title ?? courseId;
 
   const tabs: { id: DetailTab | 'graph'; label: string }[] = [
@@ -44,6 +53,7 @@ export default function StudentCourseDetailPage() {
   return (
     <div className="page course-detail-page">
       <AppHeader />
+      <CourseIndexSidebar courseId={courseId} role="student" />
       <main className="container course-detail-content">
         <h1>{courseName}</h1>
         {coursesError && <p className="form-error" role="alert">{coursesError.message}</p>}
@@ -60,9 +70,7 @@ export default function StudentCourseDetailPage() {
             <section className="course-activity-section" aria-labelledby="course-activity-heading">
               <h2 id="course-activity-heading">{isVi ? 'Hoạt động môn học' : 'Course activities'}</h2>
               <div className="course-activity-links">
-                <Link to={`/courses/${courseId}/assignments`}><ClipboardList size={17} />{isVi ? 'Bài tập' : 'Assignments'}<ChevronRight size={15} /></Link>
                 <Link to={`/courses/${courseId}/announcements`}><Bell size={17} />{isVi ? 'Thông báo' : 'Announcements'}<ChevronRight size={15} /></Link>
-                <Link to={`/courses/${courseId}/quizzes`}><FileText size={17} />{isVi ? 'Quiz và bài kiểm tra' : 'Quizzes and tests'}<ChevronRight size={15} /></Link>
                 <Link to={`/courses/${courseId}/attendance`}><CalendarCheck size={17} />{isVi ? 'Điểm danh' : 'Attendance'}<ChevronRight size={15} /></Link>
               </div>
             </section>
@@ -86,7 +94,49 @@ export default function StudentCourseDetailPage() {
                     </span>
                   </button>
                   {open && (
-                    section.items.length ? (
+                    section.id === 'assignments' ? (
+                      courseAssignments.length ? (
+                        <div className="course-resource-list">
+                          {courseAssignments.map((asg) => (
+                            <Link to={`/courses/${courseId}/assignments`} key={asg.id} className="course-resource">
+                              <ClipboardList size={16} />
+                              <span>{asg.title}</span>
+                              <small>
+                                {asg.submissionStatus === 'graded' && asg.score != null
+                                  ? `${asg.score}/${asg.maxScore}`
+                                  : asg.submissionStatus === 'submitted'
+                                    ? (isVi ? 'Đã nộp' : 'Submitted')
+                                    : (isVi ? 'Chưa nộp' : 'Pending')}
+                              </small>
+                            </Link>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="course-empty-section">
+                          <button className="btn btn-outline" onClick={() => navigate(`/courses/${courseId}/assignments`)}>
+                            {isVi ? 'Xem bài tập và hạn nộp' : 'View assignments and deadlines'}
+                          </button>
+                        </div>
+                      )
+                    ) : section.id === 'quizzes' ? (
+                      courseQuizzes.length ? (
+                        <div className="course-resource-list">
+                          {courseQuizzes.map((qz) => (
+                            <Link to={`/courses/${courseId}/quizzes/${qz.id}`} key={qz.id} className="course-resource">
+                              <FileText size={16} />
+                              <span>{qz.title}</span>
+                              <small>{qz.questions.length} câu · {qz.timeLimitMinutes}p</small>
+                            </Link>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="course-empty-section">
+                          <button className="btn btn-outline" onClick={() => navigate(`/courses/${courseId}/quizzes`)}>
+                            {isVi ? 'Xem danh sách Quiz' : 'View quizzes'}
+                          </button>
+                        </div>
+                      )
+                    ) : section.items.length ? (
                       <div className="course-resource-list">
                         {section.items.map((item) => (
                           item.kind === 'quiz' ? (
@@ -106,23 +156,71 @@ export default function StudentCourseDetailPage() {
                       </div>
                     ) : (
                       <div className="course-empty-section">
-                        {section.id === 'assignments' ? (
-                          <button className="btn btn-outline" onClick={() => navigate(`/courses/${courseId}/assignments`)}>
-                            {isVi ? 'Xem bài tập và hạn nộp' : 'View assignments and deadlines'}
-                          </button>
-                        ) : section.id === 'announcements' ? (
-                          <button className="btn btn-outline" onClick={() => navigate(`/courses/${courseId}/announcements`)}>
-                            {isVi ? 'Xem thông báo môn học' : 'View course announcements'}
-                          </button>
-                        ) : (
-                          isVi ? 'Chưa có nội dung trong mục này.' : 'There is no content in this section yet.'
-                        )}
+                        {isVi ? 'Chưa có nội dung trong mục này.' : 'There is no content in this section yet.'}
                       </div>
                     )
                   )}
                 </div>
               );
             })}
+
+            {!hasAssignmentsSection && courseAssignments.length > 0 && (
+              <div className="course-detail-section">
+                <button
+                  className="course-detail-section-head"
+                  aria-expanded={!!openSections.assignments}
+                  onClick={() => setOpenSections((current) => ({ ...current, assignments: !current.assignments }))}
+                >
+                  <span className="course-section-title">
+                    {openSections.assignments ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                    {isVi ? 'Bài tập' : 'Assignments'} ({courseAssignments.length})
+                  </span>
+                </button>
+                {openSections.assignments && (
+                  <div className="course-resource-list">
+                    {courseAssignments.map((asg) => (
+                      <Link to={`/courses/${courseId}/assignments`} key={asg.id} className="course-resource">
+                        <ClipboardList size={16} />
+                        <span>{asg.title}</span>
+                        <small>
+                          {asg.submissionStatus === 'graded' && asg.score != null
+                            ? `${asg.score}/${asg.maxScore}`
+                            : asg.submissionStatus === 'submitted'
+                              ? (isVi ? 'Đã nộp' : 'Submitted')
+                              : (isVi ? 'Chưa nộp' : 'Pending')}
+                        </small>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!hasQuizzesSection && courseQuizzes.length > 0 && (
+              <div className="course-detail-section">
+                <button
+                  className="course-detail-section-head"
+                  aria-expanded={!!openSections.quizzes}
+                  onClick={() => setOpenSections((current) => ({ ...current, quizzes: !current.quizzes }))}
+                >
+                  <span className="course-section-title">
+                    {openSections.quizzes ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                    {isVi ? 'Quiz và bài kiểm tra' : 'Quizzes and tests'} ({courseQuizzes.length})
+                  </span>
+                </button>
+                {openSections.quizzes && (
+                  <div className="course-resource-list">
+                    {courseQuizzes.map((qz) => (
+                      <Link to={`/courses/${courseId}/quizzes/${qz.id}`} key={qz.id} className="course-resource">
+                        <FileText size={16} />
+                        <span>{qz.title}</span>
+                        <small>{qz.questions.length} câu · {qz.timeLimitMinutes}p</small>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
