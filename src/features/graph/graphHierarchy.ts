@@ -22,6 +22,7 @@ export interface EdgeStyle {
 
 export const NODE_STYLES: Record<string, NodeStyle> = {
   Course: { fill: '#FFE8A3', stroke: '#E5B84B', r: 42, vi: 'Môn học' },
+  Chapter: { fill: '#DBEAFE', stroke: '#3B82F6', r: 36, vi: 'Chương' },
   LO: { fill: '#A7E8C5', stroke: '#5CB88A', r: 34, vi: 'Chuẩn đầu ra' },
   Assignment: { fill: '#FFB3AE', stroke: '#E0706A', r: 32, vi: 'Bài tập' },
   Concept: { fill: '#A6D8FA', stroke: '#58A4D8', r: 30, vi: 'Khái niệm' },
@@ -87,6 +88,7 @@ export interface GraphModel {
 function captionOf(n: KnowledgeGraphNode, props: Record<string, unknown>): string {
   if (n.type === 'LO') return String(props.code || n.id);
   if (n.type === 'Course') return String(props.code || n.id);
+  if (n.type === 'Chapter') return String(props.code || n.name || n.id);
   if (n.type === 'Assignment') return String(n.name || n.id).split('(')[0].trim();
   if (n.type === 'Content') return '';
   return String(n.name || n.id);
@@ -322,9 +324,15 @@ export function buildGraphModel(raw: KnowledgeGraphData): GraphModel {
   // Determine Tier 1 Roots with safe fallbacks for arbitrary LLM graphs
   const roots = new Set<string>();
   const courseNodes = nodes.filter((n) => n.type === 'Course');
+  const chapterNodes = nodes.filter((n) => n.type === 'Chapter');
   const loNodes = nodes.filter((n) => n.type === 'LO');
 
-  if (loNodes.length > 0) {
+  if (chapterNodes.length > 0 && courseNodes.length > 0) {
+    courseNodes.forEach((c) => roots.add(c.id));
+    chapterNodes.forEach((ch) => {
+      linkChild(courseNodes[0].id, ch.id);
+    });
+  } else if (loNodes.length > 0) {
     courseNodes.forEach((c) => roots.add(c.id));
     loNodes.forEach((lo) => {
       roots.add(lo.id);
@@ -401,11 +409,12 @@ export function buildGraphModel(raw: KnowledgeGraphData): GraphModel {
 
   // Sort each parent's children predictably (by type priority, chapter_id, learning depth, then name)
   const typePriority: Record<string, number> = {
-    LO: 0,
-    Concept: 1,
-    Assignment: 2,
-    Item: 3,
-    Content: 4,
+    Chapter: 0,
+    LO: 1,
+    Concept: 2,
+    Assignment: 3,
+    Item: 4,
+    Content: 5,
   };
   for (const [, list] of childrenOf) {
     list.sort((aId, bId) => {
@@ -623,4 +632,160 @@ export function computeVisibleGraph(model: GraphModel, opts: VisibilityOptions):
   }
 
   return { nodes: visibleNodes, edges: visibleEdges, hiddenChildCount, expandableCount, spawnAnchor };
+}
+
+
+export interface ChapterClusterMeta {
+  key: string;
+  nodeId: string;
+  code: string;
+  name: string;
+  sortOrder: number;
+  nodeIds: string[];
+}
+
+export function extractChapterMeta(node: KnowledgeGraphNode): {
+  key: string;
+  code: string;
+  name: string;
+  sortOrder: number;
+} {
+  const props = (node.properties ?? {}) as Record<string, unknown>;
+  const rawChapter = props.chapter_id ?? props.chapterId ?? props.cluster_id ?? props.clusterId;
+  const rawTitle =
+    props.chapter_title ??
+    props.chapterTitle ??
+    props.chapter_name ??
+    props.chapterName ??
+    props.cluster_name ??
+    props.clusterName;
+  const titleStr = typeof rawTitle === 'string' && rawTitle.trim() ? rawTitle.trim() : '';
+
+  if (typeof rawChapter === 'string' && rawChapter.trim()) {
+    const clean = rawChapter.trim();
+    const match = clean.match(/\d+/);
+    const num = match ? Number(match[0]) : 500;
+    const code = match ? `Chương ${match[0]}` : clean;
+    const name = titleStr ? `${code}: ${titleStr}` : code;
+    return { key: clean, code, name, sortOrder: num };
+  }
+
+  const week = props.default_week ?? props.defaultWeek;
+  if (typeof week === 'number' && Number.isFinite(week)) {
+    const code = `Tuần ${week}`;
+    return { key: `week-${week}`, code, name: titleStr ? `${code}: ${titleStr}` : code, sortOrder: 1000 + week };
+  }
+
+  return { key: 'general', code: 'Tổng quan', name: 'Nội dung chung', sortOrder: 9999 };
+}
+
+/**
+ * Restructures a course KnowledgeGraphData into a 3-tier chapter hierarchy:
+ * Course Code (mã môn) -> Chapters (các chương) -> Study items in each chapter (các mục nhỏ).
+ */
+export function buildChapterClusterGraph(
+  raw: KnowledgeGraphData,
+  courseCode: string,
+  courseTitle?: string,
+): {
+  graph: KnowledgeGraphData;
+  courseRootId: string;
+  chapters: ChapterClusterMeta[];
+} {
+  const existingCourse = raw.nodes.find((n) => n.type === 'Course');
+  const courseRootId = existingCourse?.id ?? `__course__${courseCode || 'root'}`;
+  const displayCode =
+    String((existingCourse?.properties as Record<string, unknown> | undefined)?.code ?? '').trim() ||
+    courseCode ||
+    courseRootId;
+
+  const courseNode: KnowledgeGraphNode = {
+    id: courseRootId,
+    name: courseTitle || existingCourse?.name || displayCode,
+    type: 'Course',
+    description: existingCourse?.description ?? `Mã môn: ${displayCode}`,
+    properties: { ...(existingCourse?.properties ?? {}), code: displayCode },
+  };
+
+  const studyNodes = raw.nodes.filter(
+    (n) => n.type !== 'Course' && n.type !== 'Content' && n.type !== 'LO' && n.type !== 'Chapter',
+  );
+  const studyById = new Map(studyNodes.map((n) => [n.id, n]));
+
+  const chapterBuckets = new Map<string, ChapterClusterMeta>();
+  const nodeToChapterKey = new Map<string, string>();
+
+  for (const node of studyNodes) {
+    const meta = extractChapterMeta(node);
+    nodeToChapterKey.set(node.id, meta.key);
+    const existing = chapterBuckets.get(meta.key);
+    if (existing) {
+      existing.nodeIds.push(node.id);
+    } else {
+      chapterBuckets.set(meta.key, {
+        key: meta.key,
+        nodeId: `__chapter__${meta.key}`,
+        code: meta.code,
+        name: meta.name,
+        sortOrder: meta.sortOrder,
+        nodeIds: [node.id],
+      });
+    }
+  }
+
+  const chapters = Array.from(chapterBuckets.values()).sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const chapterNodes: KnowledgeGraphNode[] = chapters.map((ch) => ({
+    id: ch.nodeId,
+    name: ch.name,
+    type: 'Chapter',
+    description: `${ch.name} (${ch.nodeIds.length} mục kiến thức)`,
+    properties: { code: ch.code, chapter_id: ch.key },
+  }));
+
+  // Track existing PART_OF parents inside the same chapter so sub-concepts stay nested
+  const hasSameChapterParent = new Set<string>();
+  for (const e of raw.edges) {
+    if (e.type !== 'PART_OF') continue;
+    const s = studyById.get(e.source);
+    const t = studyById.get(e.target);
+    if (s && t && nodeToChapterKey.get(s.id) === nodeToChapterKey.get(t.id)) {
+      hasSameChapterParent.add(s.id);
+    }
+  }
+
+  const keptIds = new Set<string>([courseRootId, ...chapterNodes.map((c) => c.id), ...studyNodes.map((n) => n.id)]);
+  const syntheticEdges: KnowledgeGraphEdge[] = [
+    ...chapters.map((ch) => ({
+      source: ch.nodeId,
+      target: courseRootId,
+      type: 'PART_OF' as KnowledgeEdgeType,
+      properties: {},
+    })),
+    ...studyNodes
+      .filter((n) => !hasSameChapterParent.has(n.id))
+      .map((n) => ({
+        source: n.id,
+        target: `__chapter__${nodeToChapterKey.get(n.id)!}`,
+        type: 'PART_OF' as KnowledgeEdgeType,
+        properties: {},
+      })),
+  ];
+
+  const preservedEdges = raw.edges.filter(
+    (e) =>
+      keptIds.has(e.source) &&
+      keptIds.has(e.target) &&
+      e.source !== e.target &&
+      !(e.type === 'DEVELOP' && (e.target === courseRootId || e.source === courseRootId)),
+  );
+
+  return {
+    graph: {
+      nodes: [courseNode, ...chapterNodes, ...studyNodes],
+      edges: [...syntheticEdges, ...preservedEdges],
+    },
+    courseRootId,
+    chapters,
+  };
 }

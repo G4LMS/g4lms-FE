@@ -14,6 +14,7 @@ import { LoView } from '../teacher/LoView';
 import { GraphHealthPanel } from './GraphHealthPanel';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas';
 import { StudentJourneyViews } from './StudentJourneyViews';
+import { StudentRelationMap } from './StudentRelationMap';
 import { TeacherReviewQueue } from './TeacherReviewQueue';
 
 type Phase = 'empty' | 'generating' | 'ready';
@@ -70,7 +71,9 @@ export function UnifiedCourseGraph({ role }: Props) {
 
   const serviceError = [kgError, filesError, studentCoursesError, teacherCoursesError].find(Boolean);
   const coursesList = canEdit ? (teacherCourses ?? []) : (studentCourses ?? []);
-  const courseName = coursesList.find((course) => course.id === courseId)?.title ?? courseId;
+  const activeCourse = coursesList.find((course) => course.id === courseId);
+  const courseName = activeCourse?.title ?? courseId;
+  const courseCode = activeCourse?.code ?? courseId;
 
   const refreshGraph = () => setReloadTick((tick) => tick + 1);
 
@@ -201,8 +204,8 @@ export function UnifiedCourseGraph({ role }: Props) {
     ? ['Lộ trình', 'Nội dung', 'Học viên']
     : ['Path', 'Content', 'Students'];
   const studentTabs = isVi
-    ? ['Lộ trình kiến nghị', 'Lộ trình cá nhân hóa', 'Nội dung', 'Điểm số']
-    : ['Recommended path', 'Personalized path', 'Content', 'Grades'];
+    ? ['Lộ trình kiến nghị', 'Nội dung', 'Điểm số']
+    : ['Recommended path', 'Content', 'Grades'];
   const tabs = canEdit ? teacherTabs : studentTabs;
 
   const onTabClick = (index: number) => {
@@ -214,9 +217,8 @@ export function UnifiedCourseGraph({ role }: Props) {
       );
     } else {
       if (index === 0) nav(`/courses/${courseId}/graph`);
-      if (index === 1) nav(`/courses/${courseId}/personalized`);
-      if (index === 2) nav(`/courses/${courseId}/content`);
-      if (index === 3) nav(`/courses/${courseId}/grades`);
+      if (index === 1) nav(`/courses/${courseId}/content`);
+      if (index === 2) nav(`/courses/${courseId}/grades`);
     }
   };
 
@@ -288,16 +290,18 @@ export function UnifiedCourseGraph({ role }: Props) {
               </button>
             </>
           )}
-          <button
-            type="button"
-            className={`round-btn right${rightOpen ? '' : ' off'}`}
-            style={{ position: 'static' }}
-            onClick={() => setRightOpen((o) => !o)}
-            aria-label={isVi ? 'Bảng thuộc tính' : 'Properties panel'}
-            title={isVi ? (rightOpen ? 'Ẩn bảng thuộc tính' : 'Mở bảng thuộc tính') : (rightOpen ? 'Hide properties panel' : 'Show properties panel')}
-          >
-            <PanelRight size={16} />
-          </button>
+          {ready && view === 'structure' && !healthOpen && knowledgeGraph?.nodes.some((n) => n.type !== 'Course') && (
+            <button
+              type="button"
+              className={`round-btn right${rightOpen ? '' : ' off'}`}
+              style={{ position: 'static' }}
+              onClick={() => setRightOpen((o) => !o)}
+              aria-label={isVi ? 'Bảng thuộc tính' : 'Properties panel'}
+              title={isVi ? (rightOpen ? 'Ẩn bảng thuộc tính' : 'Mở bảng thuộc tính') : (rightOpen ? 'Hide properties panel' : 'Show properties panel')}
+            >
+              <PanelRight size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -370,7 +374,20 @@ export function UnifiedCourseGraph({ role }: Props) {
                 data={knowledgeGraph}
                 mode={view}
                 onOpenLearn={(nodeId) => nav(`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`)}
-                onFocusInGraph={() => setView('structure')}
+                onFocusInGraph={(nodeId) => {
+                  setView('structure');
+                  if (nodeId) setFocusRequest({ id: nodeId, nonce: Date.now() });
+                }}
+              />
+            ) : !canEdit ? (
+              <StudentRelationMap
+                courseId={courseId}
+                courseCode={courseCode}
+                courseName={courseName}
+                data={knowledgeGraph}
+                rightOpen={rightOpen}
+                focusRequest={focusRequest}
+                onStartLearning={(nodeId) => nav(`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`)}
               />
             ) : (
               <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}>

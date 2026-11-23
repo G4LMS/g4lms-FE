@@ -65,6 +65,8 @@ export interface KnowledgeGraphCanvasProps {
   onStartLearning?: (nodeId: string) => void;
   focusRequest?: { id: string; nonce: number } | null;
   onQuickUpdateNode?: (nodeId: string, input: { name: string; description: string }) => Promise<void>;
+  initialExpandedIds?: string[];
+  onFocusInChain?: (nodeId: string) => void;
 }
 
 function wrapLines(text: string, maxChars: number, maxLines: number): string[] {
@@ -169,6 +171,8 @@ export function KnowledgeGraphCanvas({
   onStartLearning,
   focusRequest,
   onQuickUpdateNode,
+  initialExpandedIds,
+  onFocusInChain,
 }: KnowledgeGraphCanvasProps) {
   const isTeacher = role === 'teacher';
   const showEditControls = isTeacher && editMode;
@@ -177,7 +181,7 @@ export function KnowledgeGraphCanvas({
 
   // Progressive disclosure state
   const [showAll, setShowAll] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialExpandedIds ?? []));
   const [pageLimits, setPageLimits] = useState<Map<string, number>>(() => new Map());
   const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(() => new Set(['Content']));
   const [hiddenEdgeTypes, setHiddenEdgeTypes] = useState<Set<string>>(() => new Set());
@@ -215,10 +219,12 @@ export function KnowledgeGraphCanvas({
   const hasMountedGraphRef = useRef<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Reset state cleanly when courseId changes
+  const initialExpandedKey = (initialExpandedIds ?? []).join('|');
+
+  // Reset state cleanly when courseId or initialExpandedIds changes
   useEffect(() => {
     setShowAll(false);
-    setExpanded(new Set());
+    setExpanded(new Set(initialExpandedIds ?? []));
     setPageLimits(new Map());
     setHiddenNodeTypes(new Set(['Content']));
     setHiddenEdgeTypes(new Set());
@@ -229,7 +235,8 @@ export function KnowledgeGraphCanvas({
     posMapRef.current.clear();
     autoFitRef.current = true;
     hasMountedGraphRef.current = false;
-  }, [courseId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseId, initialExpandedKey]);
 
   const visible = useMemo(
     () =>
@@ -1499,9 +1506,14 @@ export function KnowledgeGraphCanvas({
                       Sửa chi tiết
                     </button>
                   )}
-                  {!isTeacher && onStartLearning && (
+                  {!isTeacher && onStartLearning && selectedNode.type !== 'Course' && selectedNode.type !== 'Chapter' && (
                     <button type="button" className="btn btn-primary sm" onClick={() => onStartLearning(selectedNode.id)}>
                       Học bài này
+                    </button>
+                  )}
+                  {!isTeacher && onFocusInChain && selectedNode.type !== 'Course' && selectedNode.type !== 'Chapter' && (
+                    <button type="button" className="btn btn-outline sm" onClick={() => onFocusInChain(selectedNode.id)}>
+                      Xem chuỗi bài học
                     </button>
                   )}
                 </div>
