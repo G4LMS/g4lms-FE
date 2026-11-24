@@ -7,7 +7,6 @@ import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
 import type { CourseFile } from '../types';
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const ALLOWED_FILE = /\.(pdf|ppt|pptx|doc|docx|mp4|mov|zip)$/i;
 
 function formatBytes(size: number) {
@@ -41,8 +40,8 @@ export default function CourseFilesPage() {
       setSelectedFile(null);
       return;
     }
-    if (file.size === 0 || file.size > MAX_FILE_SIZE) {
-      setActionError(isVi ? 'Tệp phải có dung lượng từ 1 byte đến 50 MB.' : 'File size must be between 1 byte and 50 MB.');
+    if (file.size === 0) {
+      setActionError(isVi ? 'Tệp không được để trống.' : 'File cannot be empty.');
       setSelectedFile(null);
       return;
     }
@@ -86,7 +85,7 @@ export default function CourseFilesPage() {
           <label className="file-dropzone" htmlFor="course-file-input">
             <Upload size={23} />
             <strong>{isVi ? 'Chọn tệp từ thiết bị' : 'Choose a file from your device'}</strong>
-            <span>{isVi ? 'PDF, DOC/DOCX, PPT/PPTX, MP4/MOV, ZIP · tối đa 50 MB' : 'PDF, DOC/DOCX, PPT/PPTX, MP4/MOV, ZIP · up to 50 MB'}</span>
+            <span>{isVi ? 'PDF, DOC/DOCX, PPT/PPTX, MP4/MOV, ZIP' : 'PDF, DOC/DOCX, PPT/PPTX, MP4/MOV, ZIP'}</span>
             <input
               ref={inputRef}
               id="course-file-input"

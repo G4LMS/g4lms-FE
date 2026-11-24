@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KnowledgeEdgeType, KnowledgeGraphData, KnowledgeNodeType } from '../../types';
@@ -54,8 +55,19 @@ export interface KnowledgeGraphCanvasProps {
   role: 'student' | 'teacher';
   editMode: boolean;
   rightOpen: boolean;
-  onAddNode?: (input: { name: string; nodeType: KnowledgeNodeType; parentId?: string | null }) => Promise<void>;
-  onAddEdge?: (input: { fromId: string; toId: string; kind: KnowledgeEdgeType }) => Promise<void>;
+  onAddNode?: (input: {
+    name: string;
+    nodeType: KnowledgeNodeType;
+    parentId?: string | null;
+    description?: string;
+    properties?: Record<string, unknown>;
+  }) => Promise<void>;
+  onAddEdge?: (input: {
+    fromId: string;
+    toId: string;
+    kind: KnowledgeEdgeType;
+    properties?: Record<string, unknown>;
+  }) => Promise<void>;
   onMergeNodes?: (input: { keepId: string; mergeId: string }) => Promise<void>;
   onDeleteNode?: (nodeId: string) => Promise<void>;
   onDeleteEdge?: (input: { fromId: string; toId: string; edgeType: string }) => Promise<void>;
@@ -64,7 +76,10 @@ export interface KnowledgeGraphCanvasProps {
   onOpenNodeEditor?: (nodeId: string) => void;
   onStartLearning?: (nodeId: string) => void;
   focusRequest?: { id: string; nonce: number } | null;
-  onQuickUpdateNode?: (nodeId: string, input: { name: string; description: string }) => Promise<void>;
+  onQuickUpdateNode?: (
+    nodeId: string,
+    input: { name: string; description: string; properties?: Record<string, unknown> },
+  ) => Promise<void>;
   initialExpandedIds?: string[];
   onFocusInChain?: (nodeId: string) => void;
 }
@@ -189,11 +204,25 @@ export function KnowledgeGraphCanvas({
   const [orderMode, setOrderMode] = useState(false);
   const [focusReview, setFocusReview] = useState(false);
   const [teacherFilter, setTeacherFilter] = useState<'all' | 'approved' | 'pending' | 'missingQuiz'>('all');
-  const [teacherOverlay, setTeacherOverlay] = useState<'structure' | 'class'>('structure');
   const [legendOpen, setLegendOpen] = useState(false);
   const [quickEdit, setQuickEdit] = useState(false);
   const [quickName, setQuickName] = useState('');
   const [quickDesc, setQuickDesc] = useState('');
+  const [quickChapter, setQuickChapter] = useState('');
+  const [quickChapterTopic, setQuickChapterTopic] = useState('');
+  const [quickWeek, setQuickWeek] = useState('1');
+  const [quickDuration, setQuickDuration] = useState('30');
+  const [quickAliases, setQuickAliases] = useState('');
+  const [quickOutcome, setQuickOutcome] = useState('');
+  const [quickSlideIds, setQuickSlideIds] = useState('');
+  const [quickQuote, setQuickQuote] = useState('');
+  const [quickSource, setQuickSource] = useState('');
+  const [quickCode, setQuickCode] = useState('');
+  const [quickSourcePage, setQuickSourcePage] = useState('');
+  const [quickAssignKind, setQuickAssignKind] = useState('quiz');
+  const [quickLos, setQuickLos] = useState('');
+  const [quickSpecText, setQuickSpecText] = useState('');
+  const [quickPage, setQuickPage] = useState('1');
   const [quickSaving, setQuickSaving] = useState(false);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -1002,26 +1031,11 @@ export function KnowledgeGraphCanvas({
           Boolean(selEdgeObj && (d.id === selEdgeObj.sourceId || d.id === selEdgeObj.targetId)),
       );
 
-    if (isTeacher) {
-      nodeG
-        .selectAll<SVGGElement, SimNode>('g.kg-node')
-        .select<SVGCircleElement>('.kg-circ')
-        .attr('fill', (d) => {
-          if (d.data.isVirtualMore || teacherOverlay !== 'class') {
-            return nodeStyleOf(d.data.type).fill;
-          }
-          let h = 0;
-          for (const ch of d.id) h = (h * 31 + ch.charCodeAt(0)) % 65;
-          const pct = 30 + h;
-          return pct >= 75 ? '#bbf7d0' : pct >= 55 ? '#fef08a' : '#fecdd3';
-        });
-    }
-
     edgeG
       .selectAll<SVGGElement, SimLink>('g.kg-edge')
       .classed('kg-dim', (d) => Boolean(es && !es.has(d.id)))
       .classed('kg-edge-sel', (d) => d.id === selectedEdgeId);
-  }, [selectedNodeId, selectedEdgeId, matchIds, focusReview, isTeacher, visible]);
+  }, [selectedNodeId, selectedEdgeId, matchIds, focusReview, visible]);
 
   // Smoothly focus camera when a hidden node was just auto-expanded via search / inspector
   useEffect(() => {
@@ -1065,26 +1079,215 @@ export function KnowledgeGraphCanvas({
   );
 
   // Teacher editing triggers
-  const triggerAddNode = async () => {
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [newNodeName, setNewNodeName] = useState('');
+  const [newNodeType, setNewNodeType] = useState<KnowledgeNodeType>('Concept');
+  const [newNodeChapter, setNewNodeChapter] = useState('ch1');
+  const [newNodeChapterTopic, setNewNodeChapterTopic] = useState('');
+  const [newNodeWeek, setNewNodeWeek] = useState('1');
+  const [newNodeDuration, setNewNodeDuration] = useState('30');
+  const [newNodeAliases, setNewNodeAliases] = useState('');
+  const [newNodeSlideIds, setNewNodeSlideIds] = useState('');
+  const [newNodeDesc, setNewNodeDesc] = useState('');
+  const [newNodeQuote, setNewNodeQuote] = useState('');
+  const [newNodeSource, setNewNodeSource] = useState('');
+  const [newNodeOutcome, setNewNodeOutcome] = useState('');
+  const [newNodeCode, setNewNodeCode] = useState('');
+  const [newNodeSourcePage, setNewNodeSourcePage] = useState('1');
+  const [newNodeAssignKind, setNewNodeAssignKind] = useState('quiz');
+  const [newNodeLos, setNewNodeLos] = useState('');
+  const [newNodeSpecText, setNewNodeSpecText] = useState('');
+  const [newNodePage, setNewNodePage] = useState('1');
+  const [attachParent, setAttachParent] = useState(true);
+  const [savingNewNode, setSavingNewNode] = useState(false);
+
+  const [edgeModalOpen, setEdgeModalOpen] = useState(false);
+  const [edgeFromId, setEdgeFromId] = useState('');
+  const [edgeToId, setEdgeToId] = useState('');
+  const [edgeKind, setEdgeKind] = useState<KnowledgeEdgeType>('PREREQUISITE');
+  const [edgeStrength, setEdgeStrength] = useState<'hard' | 'soft'>('hard');
+  const [edgeReason, setEdgeReason] = useState('');
+  const [edgeSlideId, setEdgeSlideId] = useState('');
+  const [edgeQuote, setEdgeQuote] = useState('');
+  const [edgeFromSearch, setEdgeFromSearch] = useState('');
+  const [edgeToSearch, setEdgeToSearch] = useState('');
+  const [edgeError, setEdgeError] = useState('');
+  const [savingEdge, setSavingEdge] = useState(false);
+
+  const triggerAddNode = () => {
     if (!showEditControls || !onAddNode) return;
-    const name = window.prompt('Tên nút kiến thức mới:');
-    if (!name?.trim()) return;
-    const rawType = window.prompt('Loại nút (Concept, LO, Assignment, Item, Content):', 'Concept') ?? 'Concept';
-    const allowed: KnowledgeNodeType[] = ['Concept', 'LO', 'Assignment', 'Item', 'Content'];
-    const nodeType = allowed.includes(rawType.trim()) ? rawType.trim() : 'Concept';
-    await onAddNode({ name: name.trim(), nodeType, parentId: selectedNodeId });
+    setNewNodeName('');
+    setNewNodeType('Concept');
+    setNewNodeChapter('ch1');
+    setNewNodeChapterTopic('');
+    setNewNodeWeek('1');
+    setNewNodeDuration('30');
+    setNewNodeAliases('');
+    setNewNodeSlideIds('');
+    setNewNodeDesc('');
+    setNewNodeQuote('');
+    setNewNodeSource('');
+    setNewNodeOutcome('');
+    setNewNodeCode('');
+    setNewNodeSourcePage('1');
+    setNewNodeAssignKind('quiz');
+    setNewNodeLos('');
+    setNewNodeSpecText('');
+    setNewNodePage('1');
+    setAttachParent(Boolean(selectedNodeId));
+    setAddModalOpen(true);
   };
 
-  const triggerAddEdge = async () => {
+  const submitAddNode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onAddNode || !newNodeName.trim() || savingNewNode) return;
+    setSavingNewNode(true);
+    try {
+      const parsedWeek = Number(newNodeWeek);
+      const parsedDuration = Number(newNodeDuration);
+      const parsedSourcePage = Number(newNodeSourcePage);
+      const parsedPage = Number(newNodePage);
+      const aliasesList = newNodeAliases.split(',').map((s) => s.trim()).filter(Boolean);
+      const slideIdsList = newNodeSlideIds.split(',').map((s) => s.trim()).filter(Boolean);
+      const losList = newNodeLos.split(',').map((s) => s.trim()).filter(Boolean);
+
+      let properties: Record<string, unknown> = {};
+      if (newNodeType === 'LO') {
+        properties = {
+          code: newNodeCode.trim() || newNodeName.trim(),
+          source_page: Number.isFinite(parsedSourcePage) && parsedSourcePage > 0 ? parsedSourcePage : 1,
+          default_week: Number.isFinite(parsedWeek) && parsedWeek > 0 ? parsedWeek : 1,
+          duration_min: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 25,
+          confidence: 1,
+        };
+      } else if (newNodeType === 'Assignment') {
+        properties = {
+          kind: newNodeAssignKind || 'quiz',
+          los: losList,
+          default_week: Number.isFinite(parsedWeek) && parsedWeek > 0 ? parsedWeek : 1,
+          duration_min: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 30,
+          confidence: 1,
+        };
+        if (Number.isFinite(parsedSourcePage) && parsedSourcePage > 0) properties.source_page = parsedSourcePage;
+        if (newNodeSpecText.trim()) properties.spec_text = newNodeSpecText.trim();
+      } else if (newNodeType === 'Content') {
+        properties = {
+          chapter_id: newNodeChapter.trim() || 'ch1',
+          page: Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1,
+        };
+      } else {
+        properties = {
+          kind: newNodeType === 'Item' ? 'assessment' : 'structure',
+          level: 'lesson',
+          status: 'approved',
+          confidence: 1,
+        };
+        if (newNodeChapter.trim()) properties.chapter_id = newNodeChapter.trim();
+        if (newNodeChapterTopic.trim()) properties.chapter_topic = newNodeChapterTopic.trim();
+        if (Number.isFinite(parsedWeek) && parsedWeek > 0) properties.default_week = parsedWeek;
+        if (Number.isFinite(parsedDuration) && parsedDuration > 0) properties.duration_min = parsedDuration;
+        if (aliasesList.length > 0) properties.aliases = aliasesList;
+        if (slideIdsList.length > 0) properties.slide_ids = slideIdsList;
+        if (newNodeOutcome.trim()) properties.outcome = newNodeOutcome.trim();
+        if (newNodeQuote.trim() || newNodeSource.trim()) {
+          properties.evidence = [
+            {
+              quote: newNodeQuote.trim() || newNodeDesc.trim(),
+              slide_id: newNodeSource.trim() || 'Tài liệu bổ sung',
+              source: 'slide_text',
+            },
+          ];
+        }
+      }
+
+      await onAddNode({
+        name: newNodeName.trim(),
+        nodeType: newNodeType,
+        parentId: attachParent ? selectedNodeId : null,
+        description: newNodeDesc.trim(),
+        properties,
+      });
+      setAddModalOpen(false);
+    } finally {
+      setSavingNewNode(false);
+    }
+  };
+
+  const triggerAddEdge = () => {
     if (!showEditControls || !onAddEdge) return;
-    const fromId = window.prompt('ID nút nguồn:', selectedNodeId ?? '');
-    if (!fromId?.trim()) return;
-    const toId = window.prompt('ID nút đích:');
-    if (!toId?.trim()) return;
-    const rawKind =
-      window.prompt('Loại quan hệ (PREREQUISITE, PART_OF, RELATED_TO, DEVELOP, ASSESS, EXPLAIN):', 'PREREQUISITE') ??
-      'PREREQUISITE';
-    await onAddEdge({ fromId: fromId.trim(), toId: toId.trim(), kind: rawKind.trim().toUpperCase() });
+    const candidates = model.nodes.filter((n) => !n.isVirtualMore);
+    const defaultFrom =
+      selectedNodeId && candidates.some((n) => n.id === selectedNodeId)
+        ? selectedNodeId
+        : candidates[0]?.id ?? '';
+    const defaultTo = candidates.find((n) => n.id !== defaultFrom)?.id ?? '';
+    setEdgeFromId(defaultFrom);
+    setEdgeToId(defaultTo);
+    setEdgeKind('PREREQUISITE');
+    setEdgeStrength('hard');
+    setEdgeReason('');
+    setEdgeSlideId('');
+    setEdgeQuote('');
+    setEdgeFromSearch('');
+    setEdgeToSearch('');
+    setEdgeError('');
+    setEdgeModalOpen(true);
+  };
+
+  const submitAddEdge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onAddEdge || savingEdge) return;
+    if (!edgeFromId || !edgeToId) {
+      setEdgeError('Vui lòng chọn cả nút nguồn và nút đích.');
+      return;
+    }
+    if (edgeFromId === edgeToId) {
+      setEdgeError('Nút nguồn và nút đích phải khác nhau.');
+      return;
+    }
+    setSavingEdge(true);
+    setEdgeError('');
+    try {
+      const properties: Record<string, unknown> =
+        edgeKind === 'EXPLAIN'
+          ? {
+              quote: edgeQuote.trim() || 'Manual explanation link',
+              redundant: false,
+              role: 'Definition',
+            }
+          : edgeKind === 'DEVELOP' || edgeKind === 'PART_OF'
+            ? {
+                redundant: false,
+                status: 'approved',
+                ...(edgeReason.trim() ? { reason: edgeReason.trim() } : {}),
+              }
+            : {
+                basis: 'manual',
+                confidence: 1,
+                order_sensitive: false,
+                redundant: false,
+                status: 'approved',
+                strength: edgeStrength,
+                ...(edgeReason.trim() ? { reason: edgeReason.trim() } : {}),
+                ...(edgeQuote.trim() || edgeSlideId.trim()
+                  ? {
+                      evidence: [
+                        {
+                          quote: edgeQuote.trim(),
+                          slide_id: edgeSlideId.trim() || 'Tài liệu bổ sung',
+                          source: 'slide_text',
+                        },
+                      ],
+                    }
+                  : {}),
+              };
+      await onAddEdge({ fromId: edgeFromId, toId: edgeToId, kind: edgeKind, properties });
+      setEdgeModalOpen(false);
+    } catch (reason) {
+      setEdgeError(reason instanceof Error ? reason.message : 'Không thể nối quan hệ.');
+    } finally {
+      setSavingEdge(false);
+    }
   };
 
   const triggerMergeNodes = async () => {
@@ -1139,228 +1342,7 @@ export function KnowledgeGraphCanvas({
 
   return (
     <div className="kg-shell">
-      {/* Top Control Header */}
-      <div className="kg-header">
-        <div className="kg-search-wrap">
-          <Search size={13} className="kg-search-ico" />
-          <input
-            ref={searchInputRef}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => window.setTimeout(() => setSearchFocused(false), 180)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && searchMatches.length > 0) {
-                revealNode(searchMatches[0].id);
-                setSearchFocused(false);
-              }
-            }}
-            placeholder="Tìm khái niệm, LO, bài tập… ( / )"
-          />
-          {searchFocused && query.trim() && (
-            <div className="kg-search-dropdown">
-              {searchMatches.length === 0 ? (
-                <div className="kg-search-empty">Không tìm thấy nút phù hợp</div>
-              ) : (
-                searchMatches.map((item) => {
-                  const isVis = visible.nodes.some((vn) => vn.id === item.id);
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className="kg-search-item"
-                      onMouseDown={(ev) => {
-                        ev.preventDefault();
-                        revealNode(item.id);
-                        setSearchFocused(false);
-                      }}
-                    >
-                      <span className="kg-dot" style={{ background: nodeStyleOf(item.type).fill }} />
-                      <span className="kg-search-name">{item.name}</span>
-                      <span className="kg-search-meta">
-                        {item.type}
-                        {!isVis ? ' · tự mở đường' : ''}
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          )}
-        </div>
-
-        <label className="kg-ctl">
-          <input type="checkbox" checked={orderMode} onChange={(e) => setOrderMode(e.target.checked)} />
-          Theo thứ tự học
-        </label>
-        <label className="kg-ctl">
-          <input type="checkbox" checked={hideRedundant} onChange={(e) => setHideRedundant(e.target.checked)} />
-          Ẩn cạnh dư
-        </label>
-
-        <div className="kg-mode-btns">
-          {showAll ? (
-            <button type="button" className="kg-btn" onClick={handleCollapseAll} title="Thu gọn về các nút bậc 1">
-              <Minimize2 size={12} /> Thu gọn về gốc
-            </button>
-          ) : (
-            <button type="button" className="kg-btn" onClick={handleExpandAll} title="Hiển thị toàn bộ đồ thị">
-              <Maximize2 size={12} /> Mở tất cả
-            </button>
-          )}
-          <button type="button" className="kg-btn" onClick={handleRelayout} title="Bỏ ghim và sắp xếp lại">
-            <RotateCcw size={12} /> Sắp xếp lại
-          </button>
-        </div>
-
-        <div className="kg-spacer" />
-
-        {showEditControls ? (
-          <div className="kg-edit-bar">
-            <button type="button" className="kg-btn" onClick={() => void triggerAddNode()}>
-              <Plus size={12} /> Thêm nút
-            </button>
-            <button type="button" className="kg-btn" onClick={() => void triggerAddEdge()}>
-              <Link2 size={12} /> Nối cạnh
-            </button>
-            <button type="button" className="kg-btn" onClick={() => void triggerMergeNodes()}>
-              <Merge size={12} /> Gộp nút
-            </button>
-            <button
-              type="button"
-              className="kg-btn danger"
-              disabled={!selectedNode && !selectedEdge}
-              onClick={() => void triggerDeleteSelected()}
-            >
-              <Trash2 size={12} /> Xóa đã chọn
-            </button>
-          </div>
-        ) : !isTeacher ? (
-          <span className="kg-readonly-pill">
-            <Eye size={12} /> Chế độ chỉ xem
-          </span>
-        ) : null}
-      </div>
-
-      {/* Node & Relation Type Chips */}
-      <div className="kg-overview">
-        <div className="kg-chip-row">
-          <span className="kg-chip-lbl">Loại nút</span>
-          <div className="kg-chips">
-            {presentNodeTypes.map((type) => {
-              const total = model.nodes.filter((n) => n.type === type).length;
-              const visCount = visible.nodes.filter((n) => n.type === type).length;
-              const off = hiddenNodeTypes.has(type);
-              const style = nodeStyleOf(type);
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  className={`kg-pill${off ? ' off' : ''}`}
-                  style={off ? undefined : { background: style.fill, borderColor: style.stroke }}
-                  title={`${style.vi} · bấm để ẩn/hiện`}
-                  onClick={() => {
-                    setHiddenNodeTypes((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(type)) next.delete(type);
-                      else next.add(type);
-                      return next;
-                    });
-                  }}
-                >
-                  {type} <small>{off ? total : visCount === total ? total : `${visCount}/${total}`}</small>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div className="kg-chip-row">
-          <span className="kg-chip-lbl">Loại quan hệ</span>
-          <div className="kg-chips">
-            {presentEdgeTypes.map((type) => {
-              const total = model.edges.filter((e) => e.type === type).length;
-              const visCount = visible.edges.filter((e) => e.type === type).length;
-              const off = hiddenEdgeTypes.has(type);
-              const style = edgeStyleOf(type);
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  className={`kg-pill rchip${off ? ' off' : ''}`}
-                  style={off ? undefined : { color: style.color, borderColor: style.color }}
-                  title={`${style.vi} · bấm để ẩn/hiện`}
-                  onClick={() => {
-                    setHiddenEdgeTypes((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(type)) next.delete(type);
-                      else next.add(type);
-                      return next;
-                    });
-                  }}
-                >
-                  <i className={`${style.dash ? 'dash ' : ''}${style.arrow ? 'arrow' : ''}`} />
-                  {type} <small>{off ? total : visCount === total ? total : `${visCount}/${total}`}</small>
-                </button>
-              );
-            })}
-            {isTeacher && reviewEdges.length > 0 && (
-              <button
-                type="button"
-                className={`kg-pill review${focusReview ? ' on' : ''}`}
-                title={`Quan hệ do AI đề xuất có độ tin cậy < ${REVIEW_THRESHOLD} hoặc chưa duyệt · bấm để tự mở & làm nổi`}
-                onClick={handleToggleReviewFocus}
-              >
-                Cần duyệt <small>{reviewEdges.length}</small>
-              </button>
-            )}
-          </div>
-        </div>
-        {isTeacher && (
-          <div className="kg-chip-row" style={{ marginTop: 4 }}>
-            <span className="kg-chip-lbl">Soạn thảo</span>
-            <div className="kg-chips" style={{ flex: 1 }}>
-              {(
-                [
-                  ['all', 'Tất cả'],
-                  ['approved', 'Đã duyệt'],
-                  ['pending', 'Chờ duyệt (AI)'],
-                  ['missingQuiz', 'Thiếu câu hỏi'],
-                ] as const
-              ).map(([k, lbl]) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={`kg-pill${teacherFilter === k ? '' : ' off'}`}
-                  style={teacherFilter === k ? { background: '#e0f2fe', borderColor: '#7dd3fc', color: '#0369a1' } : undefined}
-                  onClick={() => setTeacherFilter(k)}
-                >
-                  {lbl}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              {teacherOverlay === 'class' && (
-                <span className="muted-xs" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  0%
-                  <span style={{ width: 54, height: 6, borderRadius: 999, background: 'linear-gradient(to right, #fecdd3, #fef08a, #bbf7d0)' }} />
-                  100% nắm vững
-                </span>
-              )}
-              <div className="kg-view-switch">
-                <button type="button" className={teacherOverlay === 'structure' ? 'on' : ''} onClick={() => setTeacherOverlay('structure')}>
-                  Cấu trúc
-                </button>
-                <button type="button" className={teacherOverlay === 'class' ? 'on' : ''} onClick={() => setTeacherOverlay('class')}>
-                  Kết quả lớp
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Main Stage + Right Inspector */}
+      {/* Main Stage + Right Controls Sidebar + Right Inspector */}
       <div className="kg-main">
         <div className="kg-stage">
           <svg ref={svgRef} className="kg-svg" />
@@ -1438,6 +1420,227 @@ export function KnowledgeGraphCanvas({
           </div>
         </div>
 
+        <aside
+          className="kg-panel"
+          style={{
+            width: 280,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            overscrollBehavior: 'contain',
+          }}
+          aria-label="Điều khiển và lọc đồ thị"
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <h2 style={{ margin: 0 }}>Bộ lọc &amp; Điều khiển</h2>
+            {!isTeacher && !showEditControls && (
+              <span className="kg-readonly-pill">
+                <Eye size={12} /> Chỉ xem
+              </span>
+            )}
+          </div>
+
+          <div className="kg-search-wrap" style={{ width: '100%' }}>
+            <Search size={13} className="kg-search-ico" />
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => window.setTimeout(() => setSearchFocused(false), 180)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && searchMatches.length > 0) {
+                  revealNode(searchMatches[0].id);
+                  setSearchFocused(false);
+                }
+              }}
+              placeholder="Tìm khái niệm, LO, bài tập… ( / )"
+              style={{ width: '100%' }}
+            />
+            {searchFocused && query.trim() && (
+              <div className="kg-search-dropdown" style={{ width: '100%' }}>
+                {searchMatches.length === 0 ? (
+                  <div className="kg-search-empty">Không tìm thấy nút phù hợp</div>
+                ) : (
+                  searchMatches.map((item) => {
+                    const isVis = visible.nodes.some((vn) => vn.id === item.id);
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="kg-search-item"
+                        onMouseDown={(ev) => {
+                          ev.preventDefault();
+                          revealNode(item.id);
+                          setSearchFocused(false);
+                        }}
+                      >
+                        <span className="kg-dot" style={{ background: nodeStyleOf(item.type).fill }} />
+                        <span className="kg-search-name">{item.name}</span>
+                        <span className="kg-search-meta">
+                          {item.type}
+                          {!isVis ? ' · tự mở đường' : ''}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label className="kg-ctl">
+              <input type="checkbox" checked={orderMode} onChange={(e) => setOrderMode(e.target.checked)} />
+              Theo thứ tự học
+            </label>
+            <label className="kg-ctl">
+              <input type="checkbox" checked={hideRedundant} onChange={(e) => setHideRedundant(e.target.checked)} />
+              Ẩn cạnh dư
+            </label>
+          </div>
+
+          <div className="kg-mode-btns" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {showAll ? (
+              <button type="button" className="kg-btn" onClick={handleCollapseAll} title="Thu gọn về các nút bậc 1">
+                <Minimize2 size={12} /> Thu gọn về gốc
+              </button>
+            ) : (
+              <button type="button" className="kg-btn" onClick={handleExpandAll} title="Hiển thị toàn bộ đồ thị">
+                <Maximize2 size={12} /> Mở tất cả
+              </button>
+            )}
+            <button type="button" className="kg-btn" onClick={handleRelayout} title="Bỏ ghim và sắp xếp lại">
+              <RotateCcw size={12} /> Sắp xếp lại
+            </button>
+          </div>
+
+          {showEditControls && (
+            <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+              <h2>Thao tác chỉnh sửa</h2>
+              <div className="kg-edit-bar" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <button type="button" className="kg-btn" onClick={() => void triggerAddNode()}>
+                  <Plus size={12} /> Thêm nút
+                </button>
+                <button type="button" className="kg-btn" onClick={() => void triggerAddEdge()}>
+                  <Link2 size={12} /> Nối cạnh
+                </button>
+                <button type="button" className="kg-btn" onClick={() => void triggerMergeNodes()}>
+                  <Merge size={12} /> Gộp nút
+                </button>
+                <button
+                  type="button"
+                  className="kg-btn danger"
+                  disabled={!selectedNode && !selectedEdge}
+                  onClick={() => void triggerDeleteSelected()}
+                >
+                  <Trash2 size={12} /> Xóa đã chọn
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+            <h2>Loại nút</h2>
+            <div className="kg-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {presentNodeTypes.map((type) => {
+                const total = model.nodes.filter((n) => n.type === type).length;
+                const visCount = visible.nodes.filter((n) => n.type === type).length;
+                const off = hiddenNodeTypes.has(type);
+                const style = nodeStyleOf(type);
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    className={`kg-pill${off ? ' off' : ''}`}
+                    style={off ? undefined : { background: style.fill, borderColor: style.stroke }}
+                    title={`${style.vi} · bấm để ẩn/hiện`}
+                    onClick={() => {
+                      setHiddenNodeTypes((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(type)) next.delete(type);
+                        else next.add(type);
+                        return next;
+                      });
+                    }}
+                  >
+                    {type} <small>{off ? total : visCount === total ? total : `${visCount}/${total}`}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+            <h2>Loại quan hệ</h2>
+            <div className="kg-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {presentEdgeTypes.map((type) => {
+                const total = model.edges.filter((e) => e.type === type).length;
+                const visCount = visible.edges.filter((e) => e.type === type).length;
+                const off = hiddenEdgeTypes.has(type);
+                const style = edgeStyleOf(type);
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    className={`kg-pill rchip${off ? ' off' : ''}`}
+                    style={off ? undefined : { color: style.color, borderColor: style.color }}
+                    title={`${style.vi} · bấm để ẩn/hiện`}
+                    onClick={() => {
+                      setHiddenEdgeTypes((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(type)) next.delete(type);
+                        else next.add(type);
+                        return next;
+                      });
+                    }}
+                  >
+                    <i className={`${style.dash ? 'dash ' : ''}${style.arrow ? 'arrow' : ''}`} />
+                    {type} <small>{off ? total : visCount === total ? total : `${visCount}/${total}`}</small>
+                  </button>
+                );
+              })}
+              {isTeacher && editMode && reviewEdges.length > 0 && (
+                <button
+                  type="button"
+                  className={`kg-pill review${focusReview ? ' on' : ''}`}
+                  title={`Quan hệ do AI đề xuất có độ tin cậy < ${REVIEW_THRESHOLD} hoặc chưa duyệt · bấm để tự mở & làm nổi`}
+                  onClick={handleToggleReviewFocus}
+                >
+                  Cần duyệt <small>{reviewEdges.length}</small>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isTeacher && editMode && (
+            <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+              <h2>Soạn thảo</h2>
+              <div className="kg-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {(
+                  [
+                    ['all', 'Tất cả'],
+                    ['approved', 'Đã duyệt'],
+                    ['pending', 'Chờ duyệt (AI)'],
+                    ['missingQuiz', 'Thiếu câu hỏi'],
+                  ] as const
+                ).map(([k, lbl]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`kg-pill${teacherFilter === k ? '' : ' off'}`}
+                    style={teacherFilter === k ? { background: '#e0f2fe', borderColor: '#7dd3fc', color: '#0369a1' } : undefined}
+                    onClick={() => setTeacherFilter(k)}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+
         {rightOpen && (
           <aside className="kg-panel">
             {selectedNode ? (
@@ -1489,8 +1692,26 @@ export function KnowledgeGraphCanvas({
                       type="button"
                       className="btn btn-outline sm"
                       onClick={() => {
+                        const props = selectedNode.props ?? {};
+                        const evList = Array.isArray(props.evidence) ? (props.evidence as Array<Record<string, unknown>>) : [];
+                        const firstEv = evList[0] ?? {};
                         setQuickName(selectedNode.name);
                         setQuickDesc(selectedNode.description);
+                        setQuickChapter(String(props.chapter_id ?? ''));
+                        setQuickChapterTopic(String(props.chapter_topic ?? ''));
+                        setQuickWeek(props.default_week != null ? String(props.default_week) : '1');
+                        setQuickDuration(props.duration_min != null ? String(props.duration_min) : '30');
+                        setQuickAliases(Array.isArray(props.aliases) ? (props.aliases as string[]).join(', ') : '');
+                        setQuickOutcome(String(props.outcome ?? ''));
+                        setQuickSlideIds(Array.isArray(props.slide_ids) ? (props.slide_ids as string[]).join(', ') : '');
+                        setQuickQuote(String(firstEv.quote ?? ''));
+                        setQuickSource(String(firstEv.slide_id ?? firstEv.slideId ?? ''));
+                        setQuickCode(String(props.code ?? ''));
+                        setQuickSourcePage(props.source_page != null ? String(props.source_page) : '1');
+                        setQuickAssignKind(String(props.kind ?? 'quiz'));
+                        setQuickLos(Array.isArray(props.los) ? (props.los as string[]).join(', ') : '');
+                        setQuickSpecText(String(props.spec_text ?? ''));
+                        setQuickPage(props.page != null ? String(props.page) : '1');
                         setQuickEdit((v) => !v);
                       }}
                     >
@@ -1530,9 +1751,196 @@ export function KnowledgeGraphCanvas({
                       rows={2}
                       value={quickDesc}
                       onChange={(e) => setQuickDesc(e.target.value)}
-                      placeholder="Mô tả ngắn..."
+                      placeholder="Mô tả / Nội dung bài học..."
                       style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
                     />
+                    {selectedNode.type === 'LO' && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6 }}>
+                        <input
+                          value={quickCode}
+                          onChange={(e) => setQuickCode(e.target.value)}
+                          placeholder="Mã LO (L.O.1.1)"
+                          title="code"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={quickSourcePage}
+                          onChange={(e) => setQuickSourcePage(e.target.value)}
+                          placeholder="Trang"
+                          title="source_page"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={quickWeek}
+                          onChange={(e) => setQuickWeek(e.target.value)}
+                          placeholder="Tuần"
+                          title="default_week"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <input
+                          type="number"
+                          min={5}
+                          step={5}
+                          value={quickDuration}
+                          onChange={(e) => setQuickDuration(e.target.value)}
+                          placeholder="Phút"
+                          title="duration_min"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                      </div>
+                    )}
+                    {selectedNode.type === 'Assignment' && (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6 }}>
+                          <select
+                            value={quickAssignKind}
+                            onChange={(e) => setQuickAssignKind(e.target.value)}
+                            title="kind"
+                            style={{ padding: '5px 6px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          >
+                            <option value="quiz">quiz</option>
+                            <option value="homework">homework</option>
+                            <option value="lab">lab</option>
+                            <option value="exam">exam</option>
+                          </select>
+                          <input
+                            type="number"
+                            min={1}
+                            value={quickSourcePage}
+                            onChange={(e) => setQuickSourcePage(e.target.value)}
+                            placeholder="Trang"
+                            title="source_page"
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            value={quickWeek}
+                            onChange={(e) => setQuickWeek(e.target.value)}
+                            placeholder="Tuần"
+                            title="default_week"
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                          <input
+                            type="number"
+                            min={5}
+                            step={5}
+                            value={quickDuration}
+                            onChange={(e) => setQuickDuration(e.target.value)}
+                            placeholder="Phút"
+                            title="duration_min"
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                        </div>
+                        <input
+                          value={quickLos}
+                          onChange={(e) => setQuickLos(e.target.value)}
+                          placeholder="Danh sách LO (VD: CO3093.LO1.1, CO3093.LO1.2)"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <textarea
+                          rows={2}
+                          value={quickSpecText}
+                          onChange={(e) => setQuickSpecText(e.target.value)}
+                          placeholder="Đặc tả bài tập (spec_text)..."
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                      </>
+                    )}
+                    {selectedNode.type === 'Content' && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                        <input
+                          value={quickChapter}
+                          onChange={(e) => setQuickChapter(e.target.value)}
+                          placeholder="Buổi (ch1...)"
+                          title="chapter_id"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={quickPage}
+                          onChange={(e) => setQuickPage(e.target.value)}
+                          placeholder="Số trang (page)"
+                          title="page"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                      </div>
+                    )}
+                    {selectedNode.type !== 'LO' && selectedNode.type !== 'Assignment' && selectedNode.type !== 'Content' && (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                          <input
+                            value={quickChapter}
+                            onChange={(e) => setQuickChapter(e.target.value)}
+                            placeholder="Buổi (ch1...)"
+                            title="chapter_id"
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            value={quickWeek}
+                            onChange={(e) => setQuickWeek(e.target.value)}
+                            placeholder="Tuần"
+                            title="default_week"
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                          <input
+                            type="number"
+                            min={5}
+                            step={5}
+                            value={quickDuration}
+                            onChange={(e) => setQuickDuration(e.target.value)}
+                            placeholder="Phút"
+                            title="duration_min"
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                        </div>
+                        <input
+                          value={quickChapterTopic}
+                          onChange={(e) => setQuickChapterTopic(e.target.value)}
+                          placeholder="Chủ đề buổi học (chapter_topic)..."
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <input
+                          value={quickOutcome}
+                          onChange={(e) => setQuickOutcome(e.target.value)}
+                          placeholder="Mục tiêu cần đạt (outcome)..."
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <input
+                          value={quickAliases}
+                          onChange={(e) => setQuickAliases(e.target.value)}
+                          placeholder="Từ khóa đồng nghĩa (cách nhau dấu phẩy)..."
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <input
+                          value={quickSlideIds}
+                          onChange={(e) => setQuickSlideIds(e.target.value)}
+                          placeholder="Slide IDs (VD: Chapter_1_v9.0_p10, ...)"
+                          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                        />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                          <input
+                            value={quickSource}
+                            onChange={(e) => setQuickSource(e.target.value)}
+                            placeholder="Slide / Trang (slide_id)"
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                          <input
+                            value={quickQuote}
+                            onChange={(e) => setQuickQuote(e.target.value)}
+                            placeholder="Trích dẫn slide..."
+                            style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', fontSize: 12 }}
+                          />
+                        </div>
+                      </>
+                    )}
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button
                         type="button"
@@ -1541,7 +1949,57 @@ export function KnowledgeGraphCanvas({
                         onClick={async () => {
                           setQuickSaving(true);
                           try {
-                            await onQuickUpdateNode(selectedNode.id, { name: quickName.trim(), description: quickDesc.trim() });
+                            const nextProps: Record<string, unknown> = { ...(selectedNode.props ?? {}) };
+                            const w = Number(quickWeek);
+                            const dur = Number(quickDuration);
+                            const sp = Number(quickSourcePage);
+                            if (selectedNode.type === 'LO') {
+                              if (quickCode.trim()) nextProps.code = quickCode.trim();
+                              if (Number.isFinite(sp) && sp > 0) nextProps.source_page = sp;
+                              if (Number.isFinite(w) && w > 0) nextProps.default_week = w;
+                              if (Number.isFinite(dur) && dur > 0) nextProps.duration_min = dur;
+                            } else if (selectedNode.type === 'Assignment') {
+                              nextProps.kind = quickAssignKind || 'quiz';
+                              nextProps.los = quickLos.split(',').map((s) => s.trim()).filter(Boolean);
+                              if (Number.isFinite(sp) && sp > 0) nextProps.source_page = sp;
+                              if (Number.isFinite(w) && w > 0) nextProps.default_week = w;
+                              if (Number.isFinite(dur) && dur > 0) nextProps.duration_min = dur;
+                              if (quickSpecText.trim()) nextProps.spec_text = quickSpecText.trim();
+                              else delete nextProps.spec_text;
+                            } else if (selectedNode.type === 'Content') {
+                              if (quickChapter.trim()) nextProps.chapter_id = quickChapter.trim();
+                              const pg = Number(quickPage);
+                              if (Number.isFinite(pg) && pg > 0) nextProps.page = pg;
+                            } else {
+                              if (quickChapter.trim()) nextProps.chapter_id = quickChapter.trim();
+                              else delete nextProps.chapter_id;
+                              if (quickChapterTopic.trim()) nextProps.chapter_topic = quickChapterTopic.trim();
+                              else delete nextProps.chapter_topic;
+                              if (Number.isFinite(w) && w > 0) nextProps.default_week = w;
+                              if (Number.isFinite(dur) && dur > 0) nextProps.duration_min = dur;
+                              const aliases = quickAliases.split(',').map((s) => s.trim()).filter(Boolean);
+                              if (aliases.length > 0) nextProps.aliases = aliases;
+                              else delete nextProps.aliases;
+                              const sIds = quickSlideIds.split(',').map((s) => s.trim()).filter(Boolean);
+                              if (sIds.length > 0) nextProps.slide_ids = sIds;
+                              else delete nextProps.slide_ids;
+                              if (quickOutcome.trim()) nextProps.outcome = quickOutcome.trim();
+                              else delete nextProps.outcome;
+                              if (quickSource.trim() || quickQuote.trim()) {
+                                nextProps.evidence = [
+                                  {
+                                    quote: quickQuote.trim() || quickDesc.trim(),
+                                    slide_id: quickSource.trim() || 'Tài liệu bổ sung',
+                                    source: 'slide_text',
+                                  },
+                                ];
+                              }
+                            }
+                            await onQuickUpdateNode(selectedNode.id, {
+                              name: quickName.trim(),
+                              description: quickDesc.trim(),
+                              properties: nextProps,
+                            });
                             setQuickEdit(false);
                           } finally {
                             setQuickSaving(false);
@@ -1596,7 +2054,7 @@ export function KnowledgeGraphCanvas({
                     {(selectedNode.props.default_week ?? selectedNode.props.defaultWeek) != null && (
                       <tr>
                         <td>tuần gợi ý</td>
-                        <td>Tuần {String(selectedNode.props.default_week ?? selectedNode.props.defaultWeek)}</td>
+                        <td>Buổi học {String(selectedNode.props.default_week ?? selectedNode.props.defaultWeek)}</td>
                       </tr>
                     )}
                     {typeof selectedNode.props.confidence === 'number' && (
@@ -1640,7 +2098,7 @@ export function KnowledgeGraphCanvas({
                     )}
                     {Boolean(selectedNode.props.chapter_id) && (
                       <tr>
-                        <td>chương</td>
+                        <td>buổi học</td>
                         <td>{String(selectedNode.props.chapter_id)}</td>
                       </tr>
                     )}
@@ -1825,7 +2283,7 @@ export function KnowledgeGraphCanvas({
                     {Boolean(selectedEdge.props.strength) && (
                       <tr>
                         <td>độ mạnh</td>
-                        <td>{selectedEdge.props.strength === 'hard' ? 'Bắt buộc (hard)' : 'Mềm (soft)'}</td>
+                        <td>Bắt buộc</td>
                       </tr>
                     )}
                     {Boolean(selectedEdge.props.reason) && (
@@ -1911,6 +2369,476 @@ export function KnowledgeGraphCanvas({
           </aside>
         )}
       </div>
+
+      {addModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Thêm nút kiến thức mới"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 60,
+            padding: 16,
+          }}
+        >
+          <form
+            onSubmit={(e) => void submitAddNode(e)}
+            style={{
+              width: '100%',
+              maxWidth: 520,
+              background: '#fff',
+              borderRadius: 14,
+              border: '1px solid var(--line)',
+              boxShadow: '0 20px 50px rgba(15, 23, 42, 0.2)',
+              padding: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Thêm nút kiến thức &amp; nội dung</h3>
+              <button type="button" className="kg-btn sm" onClick={() => setAddModalOpen(false)}>
+                <X size={14} />
+              </button>
+            </div>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+              Tên nút *
+              <input
+                required
+                value={newNodeName}
+                onChange={(e) => setNewNodeName(e.target.value)}
+                placeholder="Ví dụ: Hàng đợi ưu tiên (Priority Queue)"
+                style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+              />
+            </label>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Loại nút
+                <select
+                  value={newNodeType}
+                  onChange={(e) => setNewNodeType(e.target.value as KnowledgeNodeType)}
+                  style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                >
+                  <option value="Concept">Concept (Khái niệm)</option>
+                  <option value="LO">LO (Chuẩn đầu ra)</option>
+                  <option value="Assignment">Assignment (Bài tập)</option>
+                  <option value="Item">Item (Câu hỏi)</option>
+                  <option value="Content">Content (Tài liệu)</option>
+                </select>
+              </label>
+              {newNodeType === 'LO' ? (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Mã chuẩn đầu ra (code)
+                  <input
+                    value={newNodeCode}
+                    onChange={(e) => setNewNodeCode(e.target.value)}
+                    placeholder="VD: L.O.1.1"
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+              ) : newNodeType === 'Assignment' ? (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Loại bài tập (kind)
+                  <select
+                    value={newNodeAssignKind}
+                    onChange={(e) => setNewNodeAssignKind(e.target.value)}
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  >
+                    <option value="quiz">quiz</option>
+                    <option value="homework">homework</option>
+                    <option value="lab">lab</option>
+                    <option value="exam">exam</option>
+                  </select>
+                </label>
+              ) : (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Mã buổi học (chapter_id)
+                  <input
+                    value={newNodeChapter}
+                    onChange={(e) => setNewNodeChapter(e.target.value)}
+                    placeholder="ch1, ch2..."
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+              )}
+            </div>
+
+            {newNodeType === 'Content' ? (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Số trang slide (page)
+                <input
+                  type="number"
+                  min={1}
+                  value={newNodePage}
+                  onChange={(e) => setNewNodePage(e.target.value)}
+                  style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                />
+              </label>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Tuần học (default_week)
+                  <input
+                    type="number"
+                    min={1}
+                    value={newNodeWeek}
+                    onChange={(e) => setNewNodeWeek(e.target.value)}
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Thời lượng (phút)
+                  <input
+                    type="number"
+                    min={5}
+                    step={5}
+                    value={newNodeDuration}
+                    onChange={(e) => setNewNodeDuration(e.target.value)}
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+                {newNodeType === 'LO' || newNodeType === 'Assignment' ? (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                    Trang đề cương (source_page)
+                    <input
+                      type="number"
+                      min={1}
+                      value={newNodeSourcePage}
+                      onChange={(e) => setNewNodeSourcePage(e.target.value)}
+                      style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                    />
+                  </label>
+                ) : (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                    Chủ đề buổi (chapter_topic)
+                    <input
+                      value={newNodeChapterTopic}
+                      onChange={(e) => setNewNodeChapterTopic(e.target.value)}
+                      placeholder="VD: Introduction"
+                      style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                    />
+                  </label>
+                )}
+              </div>
+            )}
+
+            {newNodeType === 'Assignment' && (
+              <>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Danh sách LO liên quan (los, cách nhau dấu phẩy)
+                  <input
+                    value={newNodeLos}
+                    onChange={(e) => setNewNodeLos(e.target.value)}
+                    placeholder="VD: CO3093.LO1.1, CO3093.LO1.2"
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Đặc tả bài tập (spec_text)
+                  <textarea
+                    rows={2}
+                    value={newNodeSpecText}
+                    onChange={(e) => setNewNodeSpecText(e.target.value)}
+                    placeholder="Nội dung yêu cầu của bài tập..."
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+              </>
+            )}
+
+            {(newNodeType === 'Concept' || newNodeType === 'Item') && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Từ khóa đồng nghĩa (aliases)
+                  <input
+                    value={newNodeAliases}
+                    onChange={(e) => setNewNodeAliases(e.target.value)}
+                    placeholder="VD: End Systems, Clients"
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Slide IDs (slide_ids)
+                  <input
+                    value={newNodeSlideIds}
+                    onChange={(e) => setNewNodeSlideIds(e.target.value)}
+                    placeholder="VD: Chapter_1_v9.0_p10"
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  />
+                </label>
+              </div>
+            )}
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+              Mô tả / Nội dung bài học
+              <textarea
+                rows={3}
+                value={newNodeDesc}
+                onChange={(e) => setNewNodeDesc(e.target.value)}
+                placeholder="Nhập phần giải thích chi tiết cho nội dung bài học của nút này..."
+                style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+              />
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+              Trích dẫn từ tài liệu / Slide
+              <textarea
+                rows={2}
+                value={newNodeQuote}
+                onChange={(e) => setNewNodeQuote(e.target.value)}
+                placeholder="Đoạn trích dẫn nguyên văn từ slide hoặc giáo trình..."
+                style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+              />
+            </label>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Nguồn trích dẫn (Slide/Trang)
+                <input
+                  value={newNodeSource}
+                  onChange={(e) => setNewNodeSource(e.target.value)}
+                  placeholder="VD: Slide 3.2 · Trang 14"
+                  style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Mục tiêu cần đạt
+                <input
+                  value={newNodeOutcome}
+                  onChange={(e) => setNewNodeOutcome(e.target.value)}
+                  placeholder="VD: Cài đặt được thao tác..."
+                  style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                />
+              </label>
+            </div>
+
+            {selectedNodeId && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={attachParent}
+                  onChange={(e) => setAttachParent(e.target.checked)}
+                />
+                Gắn làm nút con của nút đang chọn ({selectedNode?.name ?? selectedNodeId})
+              </label>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+              <button type="button" className="btn btn-outline sm" onClick={() => setAddModalOpen(false)}>
+                Hủy
+              </button>
+              <button type="submit" className="btn btn-primary sm" disabled={savingNewNode || !newNodeName.trim()}>
+                {savingNewNode ? 'Đang tạo...' : 'Tạo nút & lưu nội dung'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {edgeModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Nối cạnh giữa hai nút"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 60,
+            padding: 16,
+          }}
+        >
+          <form
+            onSubmit={(e) => void submitAddEdge(e)}
+            style={{
+              width: '100%',
+              maxWidth: 520,
+              background: '#fff',
+              borderRadius: 14,
+              border: '1px solid var(--line)',
+              boxShadow: '0 20px 50px rgba(15, 23, 42, 0.2)',
+              padding: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Nối quan hệ giữa hai nút</h3>
+              <button type="button" className="kg-btn sm" onClick={() => setEdgeModalOpen(false)}>
+                <X size={14} />
+              </button>
+            </div>
+
+            {edgeError && (
+              <div className="form-error" role="alert" style={{ margin: 0, fontSize: 12 }}>
+                {edgeError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 600 }}>Nối từ nút (Nguồn) *</label>
+              <input
+                value={edgeFromSearch}
+                onChange={(e) => setEdgeFromSearch(e.target.value)}
+                placeholder="Lọc nhanh theo tên hoặc ID..."
+                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', fontSize: 12 }}
+              />
+              <select
+                value={edgeFromId}
+                onChange={(e) => {
+                  setEdgeFromId(e.target.value);
+                  setEdgeError('');
+                }}
+                style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontSize: 13 }}
+              >
+                {model.nodes
+                  .filter((n) => {
+                    if (n.isVirtualMore) return false;
+                    const q = edgeFromSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q) || n.type.toLowerCase().includes(q);
+                  })
+                  .map((n) => (
+                    <option key={n.id} value={n.id}>
+                      [{n.type}] {n.name} ({n.id})
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-outline sm"
+                onClick={() => {
+                  const prevFrom = edgeFromId;
+                  setEdgeFromId(edgeToId);
+                  setEdgeToId(prevFrom);
+                  setEdgeError('');
+                }}
+              >
+                ⇅ Đảo chiều (Từ ↔ Đến)
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 600 }}>Đến nút (Đích) *</label>
+              <input
+                value={edgeToSearch}
+                onChange={(e) => setEdgeToSearch(e.target.value)}
+                placeholder="Lọc nhanh theo tên hoặc ID..."
+                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', fontSize: 12 }}
+              />
+              <select
+                value={edgeToId}
+                onChange={(e) => {
+                  setEdgeToId(e.target.value);
+                  setEdgeError('');
+                }}
+                style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontSize: 13 }}
+              >
+                {model.nodes
+                  .filter((n) => {
+                    if (n.isVirtualMore || n.id === edgeFromId) return false;
+                    const q = edgeToSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q) || n.type.toLowerCase().includes(q);
+                  })
+                  .map((n) => (
+                    <option key={n.id} value={n.id}>
+                      [{n.type}] {n.name} ({n.id})
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: edgeKind === 'PREREQUISITE' ? '1fr 1fr' : '1fr', gap: 10 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Loại quan hệ
+                <select
+                  value={edgeKind}
+                  onChange={(e) => setEdgeKind(e.target.value as KnowledgeEdgeType)}
+                  style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                >
+                  <option value="PREREQUISITE">PREREQUISITE (Tiên quyết)</option>
+                  <option value="PART_OF">PART_OF (Thuộc về)</option>
+                  <option value="RELATED_TO">RELATED_TO (Liên quan)</option>
+                  <option value="DEVELOP">DEVELOP (Phát triển / Đạt chuẩn)</option>
+                  <option value="ASSESS">ASSESS (Đánh giá)</option>
+                  <option value="EXPLAIN">EXPLAIN (Giải thích)</option>
+                </select>
+              </label>
+              {edgeKind === 'PREREQUISITE' && (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Mức độ tiên quyết
+                  <select
+                    value={edgeStrength}
+                    onChange={(e) => setEdgeStrength(e.target.value as 'hard' | 'soft')}
+                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                  >
+                    <option value="hard">Bắt buộc (hard)</option>
+                    <option value="soft">Khuyến nghị (soft)</option>
+                  </select>
+                </label>
+              )}
+            </div>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+              Lý do nối cạnh (reason)
+              <input
+                value={edgeReason}
+                onChange={(e) => setEdgeReason(e.target.value)}
+                placeholder="VD: Khái niệm nguồn là nền tảng bắt buộc cho khái niệm đích..."
+                style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+              />
+            </label>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Slide ID (evidence.slide_id)
+                <input
+                  value={edgeSlideId}
+                  onChange={(e) => setEdgeSlideId(e.target.value)}
+                  placeholder="VD: Chapter_1_v9.0_p16"
+                  style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Trích dẫn (evidence.quote)
+                <input
+                  value={edgeQuote}
+                  onChange={(e) => setEdgeQuote(e.target.value)}
+                  placeholder="Đoạn trích dẫn từ slide..."
+                  style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+              <button type="button" className="btn btn-outline sm" onClick={() => setEdgeModalOpen(false)}>
+                Hủy
+              </button>
+              <button type="submit" className="btn btn-primary sm" disabled={savingEdge || !edgeFromId || !edgeToId}>
+                {savingEdge ? 'Đang nối...' : 'Xác nhận nối cạnh'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {tooltip && (
         <div

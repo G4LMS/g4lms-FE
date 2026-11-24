@@ -1,3 +1,4 @@
+import { serializeKnowledgeGraph } from '../features/graph/graphSerializer';
 import type {
   AdminAnnouncementRecord, AdminCourseOption, AdminCourseRecord, AdminEnrollment, AdminStats, AdminStudentOption, AdminUser, Announcement, Assignment, AssignmentSubmissionRecord,
   AttendanceSession, ChapterLessonItem, ClusterView, ConversationMessage, ConversationSummary,
@@ -25,15 +26,50 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+let refreshInFlight: Promise<User | null> | null = null;
+
+async function tryRefreshSession(): Promise<User | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) return null;
+      const data = (await response.json()) as { user: Omit<User, 'accessToken'>; accessToken: string };
+      const refreshed: User = { ...data.user, accessToken: data.accessToken };
+      localStorage.setItem('g4lms.user', JSON.stringify(refreshed));
+      window.dispatchEvent(new Event('g4lms:user-updated'));
+      return refreshed;
+    } catch {
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, _retried = false): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
   const user = getStoredUser();
   if (user?.accessToken) headers.set('Authorization', `Bearer ${user.accessToken}`);
-  const response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
-  if (response.status === 401 && !path.endsWith('/auth/login')) {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers,
+    credentials: init.credentials ?? 'include',
+  });
+  if (response.status === 401 && !path.endsWith('/auth/login') && !path.endsWith('/auth/refresh')) {
+    if (!_retried) {
+      const refreshed = await tryRefreshSession();
+      if (refreshed?.accessToken) {
+        return request<T>(path, init, true);
+      }
+    }
     localStorage.removeItem('g4lms.user');
     window.dispatchEvent(new Event('g4lms:unauthorized'));
   }
@@ -264,6 +300,12 @@ export const api = {
     ),
   getCourseSections: (courseId: string) =>
     invoke(() => mockApi.getCourseSections(courseId), `/courses/${encodeURIComponent(courseId)}/sections`),
+  createCourseSection: (courseId: string, input: { titleVi: string; titleEn?: string }) =>
+    invoke(
+      () => mockApi.createCourseSection(courseId, input),
+      `/courses/${encodeURIComponent(courseId)}/sections`,
+      json('POST', input),
+    ),
   getStudentGrades: (courseId: string): Promise<StudentGradeItem[]> =>
     invoke(() => mockApi.getStudentGrades(courseId), `/student/courses/${encodeURIComponent(courseId)}/grades`),
   getStudentGradeSummary: (): Promise<CourseOverallGrade[]> =>
@@ -404,11 +446,11 @@ export const api = {
       () => mockApi.getQuiz(courseId, quizId),
       `/student/courses/${encodeURIComponent(courseId)}/quizzes/${encodeURIComponent(quizId)}`,
     ),
-  startQuizAttempt: (courseId: string, quizId: string): Promise<QuizAttempt> =>
+  startQuizAttempt: (courseId: string, quizId: string, unlimited = false): Promise<QuizAttempt> =>
     invoke(
-      () => mockApi.startQuizAttempt(courseId, quizId),
+      () => mockApi.startQuizAttempt(courseId, quizId, unlimited),
       `/student/courses/${encodeURIComponent(courseId)}/quizzes/${encodeURIComponent(quizId)}/attempts`,
-      json('POST', {}),
+      json('POST', { unlimited }),
     ),
   submitQuizAttempt: (courseId: string, quizId: string, attemptId: string, input: SubmitQuizInput): Promise<QuizAttempt> =>
     invoke(
@@ -446,6 +488,26 @@ export const api = {
       () => mockApi.getKnowledgeGraph(courseId),
       `/courses/${encodeURIComponent(courseId)}/knowledge-graph`,
     ),
+  saveKnowledgeGraph: (
+    courseId: string,
+    graph: KnowledgeGraphData,
+    options?: { effectiveTermNo?: number; baseRevision?: number | null; title?: string; note?: string },
+  ): Promise<KnowledgeGraphData> => {
+    const serialized = serializeKnowledgeGraph(graph);
+    if (USE_MOCK_API) {
+      return mockApi.saveKnowledgeGraph(courseId, serialized);
+    }
+    return request<Record<string, unknown>>(
+      `/courses/${encodeURIComponent(courseId)}/graph-drafts`,
+      json('POST', {
+        effectiveTermNo: options?.effectiveTermNo ?? 1,
+        baseRevision: options?.baseRevision ?? null,
+        payload: serialized,
+        title: options?.title ?? 'Knowledge Graph Draft',
+        note: options?.note ?? 'Synced from UI',
+      }),
+    ).then(() => serialized);
+  },
   generateKnowledgeGraph: async (courseId: string): Promise<KnowledgeGraphData> => {
     if (USE_MOCK_API) {
       return mockApi.generateKnowledgeGraph(courseId);
@@ -582,6 +644,59 @@ export const api = {
     invoke(() => mockApi.getLoChains(courseId), `/courses/${encodeURIComponent(courseId)}/learning-outcomes/chains`),
   getNodeEditor: (nodeId: string): Promise<NodeEditorData> =>
     invoke(() => mockApi.getNodeEditor(nodeId), `/teacher/nodes/${encodeURIComponent(nodeId)}`),
+  saveNodeEditor: async (
+    courseId: string,
+    nodeId: string,
+    input: {
+      name?: string;
+      description?: string;
+      contents?: NodeEditorData['contents'];
+      questions?: NodeEditorData['questions'];
+    },
+  ): Promise<NodeEditorData> => {
+    if (USE_MOCK_API) {
+      return mockApi.saveNodeEditor(courseId, nodeId, input);
+    }
+    const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (input.name !== undefined || input.description !== undefined) {
+      await request(
+        `/teacher/courses/${encodeURIComponent(courseId)}/graph/nodes/${encodeURIComponent(nodeId)}`,
+        json('PATCH', { name: input.name, description: input.description }),
+      );
+    }
+    if (input.contents) {
+      for (const item of input.contents) {
+        const body = {
+          title: item.title,
+          role: item.kind === 'Example' ? 'example' : 'definition',
+          body_text: item.source || item.title,
+          status: item.status,
+        };
+        if (isUuid(item.id)) {
+          await request(`/teacher/nodes/${encodeURIComponent(nodeId)}/contents/${encodeURIComponent(item.id)}`, json('PUT', body));
+        } else {
+          await request(`/teacher/nodes/${encodeURIComponent(nodeId)}/contents`, json('POST', body));
+        }
+      }
+    }
+    if (input.questions) {
+      for (const q of input.questions) {
+        const body = {
+          stem: q.text,
+          options: [],
+          correct_answer: q.difficulty || '',
+          explanation: q.bloom || '',
+          status: q.status,
+        };
+        if (isUuid(q.id)) {
+          await request(`/teacher/nodes/${encodeURIComponent(nodeId)}/items/${encodeURIComponent(q.id)}`, json('PUT', body));
+        } else {
+          await request(`/teacher/nodes/${encodeURIComponent(nodeId)}/items`, json('POST', body));
+        }
+      }
+    }
+    return api.getNodeEditor(nodeId);
+  },
 
   /* ==================== D1–D5 Course Graph Authoring Workflow ==================== */
   uploadCourseSyllabus: (courseId: string, file: File): Promise<{ syllabusId: string }> => {
@@ -722,36 +837,40 @@ export const api = {
     chapterIds: string[],
     expectedRevision: number,
     idempotencyKey: string,
-  ): Promise<{ jobId: string; status: string }> =>
-    invoke(
+  ): Promise<{ jobId: string; status: string }> => {
+    const weekId = chapterIds[0] ?? 'week_1';
+    return invoke(
       () => mockApi.createRelationJob(courseId, chapterIds, expectedRevision, idempotencyKey),
-      `/courses/${encodeURIComponent(courseId)}/relation-jobs`,
+      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(weekId)}/relation-jobs`,
       {
         method: 'POST',
         headers: { 'Idempotency-Key': idempotencyKey },
-        body: JSON.stringify({ chapterIds, expectedRevision }),
+        body: JSON.stringify({ expectedRevision }),
       },
-    ),
+    );
+  },
   getCourseRelations: (
     courseId: string,
     cursor?: string | null,
     limit = 20,
+    weekId = 'week_1',
   ): Promise<{ items: CourseRelationItem[]; nextCursor: string | null; revision: number }> => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set('cursor', cursor);
     return invoke(
       () => mockApi.getCourseRelations(courseId, cursor, limit),
-      `/courses/${encodeURIComponent(courseId)}/relations?${params.toString()}`,
+      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(weekId)}/relations?${params.toString()}`,
     );
   },
   reviewCourseRelation: (
     courseId: string,
     relationId: string,
     input: { decision: ReviewDecision; changes?: Partial<CourseRelationItem>; reviewNote?: string; expectedRevision: number },
+    weekId = 'week_1',
   ): Promise<{ relation: CourseRelationItem; revision: number }> =>
     invoke(
       () => mockApi.reviewCourseRelation(courseId, relationId, input),
-      `/courses/${encodeURIComponent(courseId)}/relations/${encodeURIComponent(relationId)}`,
+      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(weekId)}/relations/${encodeURIComponent(relationId)}`,
       json('PATCH', input),
     ),
   batchReviewCourseRelations: (
@@ -760,10 +879,11 @@ export const api = {
       items: Array<{ relationId: string; decision: ReviewDecision; changes?: Partial<CourseRelationItem>; reviewNote?: string }>;
       expectedRevision: number;
     },
+    weekId = 'week_1',
   ): Promise<{ updatedCount: number; revision: number }> =>
     invoke(
       () => mockApi.batchReviewCourseRelations(courseId, input),
-      `/courses/${encodeURIComponent(courseId)}/relations/batch-review`,
+      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(weekId)}/relations/batch-review`,
       json('POST', input),
     ),
   discardCourseRelations: (courseId: string, expectedRevision: number): Promise<{ revision: number }> =>

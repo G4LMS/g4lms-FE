@@ -149,7 +149,7 @@ export function resolveRichConceptContent(
         evidence: [{ slideId: 'Slide_Detail', quote: `Phân tích từng bước xử lý và trường hợp biên của ${name}.` }],
       },
       {
-        name: `Ví dụ minh họa và liên hệ với các khái niệm liên quan trong chương.`,
+        name: `Ví dụ minh họa và liên hệ với các khái niệm liên quan trong buổi học.`,
         evidence: [{ slideId: 'Slide_Example', quote: `Vận dụng ${name} vào bài tập thực hành.` }],
       },
     ],

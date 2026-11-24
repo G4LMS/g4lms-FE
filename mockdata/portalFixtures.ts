@@ -10,7 +10,7 @@ export const dashboardActivities: DashboardActivity[] = [
   { id: 'act-3', dueAt: '2026-11-09T23:59:00+07:00', title: 'Khảo sát học phần', courseId: 'IM1022', courseCode: 'IM1022', description: 'Khảo sát môn học cần hoàn thành trước hạn.', type: 'survey' },
   { id: 'act-4', dueAt: '2026-11-15T23:59:00+07:00', title: 'Nộp báo cáo bài tập lớn', courseId: 'CO3001', courseCode: 'CO3001', description: 'Bài tập lớn học kỳ 261.', type: 'assignment' },
   { id: 'act-5', dueAt: '2026-11-22T23:59:00+07:00', title: 'Bài kiểm tra trắc nghiệm', courseId: 'CO3029', courseCode: 'CO3029', description: 'Bài kiểm tra giữa kỳ trực tuyến.', type: 'quiz', targetId: 'quiz-co3029' },
-  { id: 'act-6', dueAt: '2026-11-28T23:59:00+07:00', title: 'Nộp bài tập lớn', courseId: 'CO2003', courseCode: 'CO2003', description: 'Bài tập lớn cuối chương.', type: 'assignment' },
+  { id: 'act-6', dueAt: '2026-11-28T23:59:00+07:00', title: 'Nộp bài tập lớn', courseId: 'CO2003', courseCode: 'CO2003', description: 'Bài tập lớn cuối buổi học.', type: 'assignment' },
 ];
 
 export const calendarEvents: CalendarEvent[] = [
@@ -18,8 +18,8 @@ export const calendarEvents: CalendarEvent[] = [
   { id: 'cal-2', date: '2026-11-09', title: 'Khảo sát SP1043', type: 'warning', courseCode: 'SP1043' },
   { id: 'cal-3', date: '2026-11-09', title: 'Khảo sát CO2011', type: 'warning', courseCode: 'CO2011' },
   { id: 'cal-4', date: '2026-11-14', title: 'Bài tập lớn', type: 'warning', courseCode: 'CO3001' },
-  { id: 'cal-5', date: '2026-11-15', title: 'Chương 1: Lý thuyết', type: 'info', courseCode: 'CO2003' },
-  { id: 'cal-6', date: '2026-11-15', title: 'Chương 1: Bài tập', type: 'info', courseCode: 'CO2003' },
+  { id: 'cal-5', date: '2026-11-15', title: 'Buổi học 1: Lý thuyết', type: 'info', courseCode: 'CO2003' },
+  { id: 'cal-6', date: '2026-11-15', title: 'Buổi học 1: Bài tập', type: 'info', courseCode: 'CO2003' },
   { id: 'cal-7', date: '2026-11-17', title: 'Distributed systems', type: 'info', courseCode: 'CO3029' },
   { id: 'cal-8', date: '2026-11-22', title: 'Kiểm tra trắc nghiệm', type: 'warning', courseCode: 'CO3029' },
   { id: 'cal-9', date: '2026-11-28', title: 'Bài tập lớn', type: 'warning', courseCode: 'CO2003' },
@@ -71,7 +71,7 @@ export const studentCourseSections: CourseSection[] = [
   },
   { id: 'quizzes', titleVi: 'Đề ôn luyện và Quiz', titleEn: 'Practice exercises and quizzes', items: [] },
   {
-    id: 'ch1', titleVi: 'Chương 1: Độ phức tạp thuật toán & Con trỏ', titleEn: 'Chapter 1: Complexity & Pointers',
+    id: 'ch1', titleVi: 'Buổi học 1: Độ phức tạp thuật toán & Con trỏ', titleEn: 'Session 1: Complexity & Pointers',
     items: [
       { id: 'dsa-ch1-slides', nameVi: 'Slide 1 - Ký pháp Big-O, Omega, Theta và phân tích đệ quy', nameEn: 'Big-O & Recursion Analysis Slides', kind: 'slides' },
       { id: 'dsa-ch1-video', nameVi: 'Video: Con trỏ, cấp phát động và tránh rò rỉ bộ nhớ', nameEn: 'Video: Pointers & Dynamic Allocation', kind: 'video' },
@@ -79,7 +79,7 @@ export const studentCourseSections: CourseSection[] = [
     ],
   },
   {
-    id: 'ch2', titleVi: 'Chương 2: Danh sách liên kết (Linked List)', titleEn: 'Chapter 2: Linked Lists',
+    id: 'ch2', titleVi: 'Buổi học 2: Danh sách liên kết (Linked List)', titleEn: 'Session 2: Linked Lists',
     items: [
       { id: 'dsa-ch2-slides', nameVi: 'Slide 2 - Danh sách liên kết đơn, đôi, vòng', nameEn: 'Singly, Doubly & Circular Linked Lists Slides', kind: 'slides' },
       { id: 'dsa-ch2-video', nameVi: 'Video: Thao tác chèn, xóa node và đảo ngược danh sách', nameEn: 'Video: Insert, Delete & Reverse Linked List', kind: 'video' },
@@ -87,7 +87,7 @@ export const studentCourseSections: CourseSection[] = [
     ],
   },
   {
-    id: 'ch3', titleVi: 'Chương 3: Ngăn xếp (Stack) & Hàng đợi (Queue)', titleEn: 'Chapter 3: Stack & Queue',
+    id: 'ch3', titleVi: 'Buổi học 3: Ngăn xếp (Stack) & Hàng đợi (Queue)', titleEn: 'Session 3: Stack & Queue',
     items: [
       { id: 'dsa-ch3-slides', nameVi: 'Slide 3 - Cài đặt Stack, Queue bằng mảng và con trỏ', nameEn: 'Array & Pointer Stack/Queue Implementation', kind: 'slides' },
       { id: 'dsa-ch3-video', nameVi: 'Video: Ứng dụng Stack tính biểu thức hậu tố (Postfix)', nameEn: 'Video: Postfix Evaluation with Stack', kind: 'video' },
@@ -95,7 +95,7 @@ export const studentCourseSections: CourseSection[] = [
     ],
   },
   {
-    id: 'ch4', titleVi: 'Chương 4: Cây & Cây nhị phân tìm kiếm (BST)', titleEn: 'Chapter 4: Trees & BST',
+    id: 'ch4', titleVi: 'Buổi học 4: Cây & Cây nhị phân tìm kiếm (BST)', titleEn: 'Session 4: Trees & BST',
     items: [
       { id: 'dsa-ch4-slides', nameVi: 'Slide 4 - Duyệt cây NLR, LNR, LRN và cân bằng AVL', nameEn: 'Tree Traversals & AVL Balancing Slides', kind: 'slides' },
       { id: 'dsa-ch4-video', nameVi: 'Video: Thêm, xóa node trong BST và phép xoay AVL', nameEn: 'Video: BST Operations & AVL Rotations', kind: 'video' },
@@ -103,7 +103,7 @@ export const studentCourseSections: CourseSection[] = [
     ],
   },
   {
-    id: 'ch5', titleVi: 'Chương 5: Sắp xếp, Heap & Đồ thị', titleEn: 'Chapter 5: Sorting, Heap & Graphs',
+    id: 'ch5', titleVi: 'Buổi học 5: Sắp xếp, Heap & Đồ thị', titleEn: 'Session 5: Sorting, Heap & Graphs',
     items: [
       { id: 'dsa-ch5-slides', nameVi: 'Slide 5 - QuickSort, MergeSort, HeapSort, BFS/DFS & Dijkstra', nameEn: 'Sorting, Heaps & Graph Algorithms Slides', kind: 'slides' },
       { id: 'dsa-ch5-video', nameVi: 'Video: So sánh độ phức tạp các thuật toán sắp xếp và tìm đường', nameEn: 'Video: Sorting & Shortest Path Walkthrough', kind: 'video' },
@@ -117,27 +117,27 @@ export const networkCourseSections: CourseSection[] = [
     { id: 'net-syllabus', nameVi: 'Đề cương môn Mạng máy tính - đầy đủ', nameEn: 'Computer Networks syllabus', kind: 'pdf' },
     { id: 'net-roadmap', nameVi: 'Lộ trình học 15 tuần và chuẩn đầu ra', nameEn: '15-week learning roadmap', kind: 'slides' },
   ] },
-  { id: 'ch1', titleVi: 'Chương 1: Tổng quan mạng máy tính', titleEn: 'Chapter 1: Introduction to Networks', items: [
+  { id: 'ch1', titleVi: 'Buổi học 1: Tổng quan mạng máy tính', titleEn: 'Session 1: Introduction to Networks', items: [
     { id: 'net-ch1-slides', nameVi: 'Slide 1 - Internet, mô hình mạng và kiến trúc lớp', nameEn: 'Internet and network architecture slides', kind: 'slides' },
     { id: 'net-ch1-video', nameVi: 'Video: Internet hoạt động như thế nào', nameEn: 'Video: How the Internet works', kind: 'video' },
     { id: 'net-ch1-quiz', nameVi: 'Quiz 10 câu: mô hình mạng và mạng biên', nameEn: '10-question network fundamentals quiz', kind: 'quiz' },
   ] },
-  { id: 'ch2', titleVi: 'Chương 2: Tầng ứng dụng', titleEn: 'Chapter 2: Application Layer', items: [
+  { id: 'ch2', titleVi: 'Buổi học 2: Tầng ứng dụng', titleEn: 'Session 2: Application Layer', items: [
     { id: 'net-http-slides', nameVi: 'Slide HTTP, DNS, SMTP và truyền tải peer-to-peer', nameEn: 'HTTP, DNS, SMTP and peer-to-peer slides', kind: 'slides' },
     { id: 'net-dns-video', nameVi: 'Video thực hành phân tích DNS và HTTP bằng Wireshark', nameEn: 'DNS and HTTP Wireshark lab video', kind: 'video' },
     { id: 'net-app-quiz', nameVi: 'Quiz tầng ứng dụng và giao thức mạng', nameEn: 'Application layer protocol quiz', kind: 'quiz' },
   ] },
-  { id: 'ch3', titleVi: 'Chương 3: Tầng giao vận', titleEn: 'Chapter 3: Transport Layer', items: [
+  { id: 'ch3', titleVi: 'Buổi học 3: Tầng giao vận', titleEn: 'Session 3: Transport Layer', items: [
     { id: 'net-tcp-slides', nameVi: 'Slide TCP, UDP, điều khiển luồng và kiểm soát tắc nghẽn', nameEn: 'TCP, UDP, flow and congestion control', kind: 'slides' },
     { id: 'net-tcp-video', nameVi: 'Video mô phỏng bắt tay TCP ba bước và truyền dữ liệu tin cậy', nameEn: 'TCP three-way handshake video', kind: 'video' },
     { id: 'net-tcp-quiz', nameVi: 'Quiz TCP/UDP: tình huống và phân tích', nameEn: 'TCP/UDP scenarios quiz', kind: 'quiz' },
   ] },
-  { id: 'ch4', titleVi: 'Chương 4-5: Tầng mạng và liên kết dữ liệu', titleEn: 'Network and Data Link Layers', items: [
+  { id: 'ch4', titleVi: 'Buổi học 4-5: Tầng mạng và liên kết dữ liệu', titleEn: 'Network and Data Link Layers', items: [
     { id: 'net-routing-slides', nameVi: 'Slide định tuyến, IP, Ethernet và Switch', nameEn: 'Routing, IP, Ethernet and switching slides', kind: 'slides' },
     { id: 'net-routing-video', nameVi: 'Video tính toán Distance Vector và Link State', nameEn: 'Routing algorithm walkthrough video', kind: 'video' },
     { id: 'net-routing-quiz', nameVi: 'Quiz định tuyến, ARP và Ethernet', nameEn: 'Routing, ARP and Ethernet quiz', kind: 'quiz' },
   ] },
-  { id: 'security', titleVi: 'Chương 6: An toàn mạng', titleEn: 'Chapter 6: Network Security', items: [
+  { id: 'security', titleVi: 'Buổi học 6: An toàn mạng', titleEn: 'Session 6: Network Security', items: [
     { id: 'net-security-slides', nameVi: 'Slide mã hóa, xác thực và bảo mật truyền dữ liệu', nameEn: 'Encryption, authentication and secure transport slides', kind: 'slides' },
     { id: 'net-security-video', nameVi: 'Video phân tích HTTPS và chứng thư số', nameEn: 'HTTPS and digital certificate video', kind: 'video' },
     { id: 'net-security-quiz', nameVi: 'Quiz cơ chế bảo mật mạng', nameEn: 'Network security quiz', kind: 'quiz' },
@@ -305,7 +305,7 @@ export const courseAnnouncements: Announcement[] = [
   },
   {
     id: 'ann-2', courseId: 'CO3093', title: 'Tài liệu ôn tập cuối kỳ',
-    body: 'Tổng hợp nội dung ôn tập các chương 1 đến 6.',
+    body: 'Tổng hợp nội dung ôn tập các buổi học 1 đến 6.',
     status: 'published', createdAt: '2026-11-12T03:00:00Z', publishedAt: '2026-11-12T03:00:00Z',
   },
   {

@@ -156,10 +156,10 @@ export function GraphHealthPanel({ data, onSelectNode, onClose }: Props) {
     setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
-    <aside className="kg-panel" aria-label="Sức khỏe đồ thị">
+    <aside className="kg-panel" aria-label="Tính hoàn thiện đồ thị">
       <div className="kg-panel-head">
-        <h2>Sức khỏe Graph</h2>
-        <button type="button" className="kg-btn sm" onClick={onClose} aria-label="Đóng sức khỏe graph">
+        <h2>Tính hoàn thiện đồ thị</h2>
+        <button type="button" className="kg-btn sm" onClick={onClose} aria-label="Đóng kiểm tra tính hoàn thiện đồ thị">
           <X size={13} />
         </button>
       </div>

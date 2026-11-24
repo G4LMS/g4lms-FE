@@ -124,7 +124,7 @@ export function CourseIndexSidebar({ courseId, role, activeItemId, topOffset = 6
               </button>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto' }}>
+            <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain' }}>
               {sections.map((sec) => {
                 const isOpen = !!expanded[sec.id];
                 const chIdx = chapterSections.findIndex((c) => c.id === sec.id);

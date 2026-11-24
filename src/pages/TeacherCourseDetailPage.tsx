@@ -3,10 +3,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
-import { CourseIndexSidebar } from '../features/courses/CourseIndexSidebar';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
-import type { RosterStudent, TeacherCourseTopic, TeacherGradeRow } from '../types';
+import type { CourseSection, RosterStudent, TeacherCourseTopic, TeacherGradeRow } from '../types';
 
 const TABS = [
   ['graph', 'Lộ trình'],
@@ -21,15 +20,11 @@ export default function TeacherCourseDetailPage() {
   const [query, setQuery] = useState('');
   const [progressFilter, setProgressFilter] = useState<'all' | 'good' | 'mid' | 'low'>('all');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ materials: true, overview: true, ch1: true });
-  const [customSections, setCustomSections] = useState<Array<{ id: string; titleVi: string; titleEn: string }>>(() => {
-    try {
-      const raw = localStorage.getItem(`g4lms.customSections.${courseId}`);
-      if (raw) return JSON.parse(raw) as Array<{ id: string; titleVi: string; titleEn: string }>;
-    } catch { /* ignore */ }
-    return [];
-  });
+  const [sections, setSections] = useState<CourseSection[]>([]);
   const [addingSection, setAddingSection] = useState(false);
   const [newSectionTitle, setNewSectionTitle] = useState('');
+  const [creatingSection, setCreatingSection] = useState(false);
+  const [sectionError, setSectionError] = useState('');
   const [studentSubTab, setStudentSubTab] = useState<'overview' | 'gradebook' | 'attendance'>(
     tab === 'grades' ? 'gradebook' : 'overview',
   );
@@ -93,6 +88,10 @@ export default function TeacherCourseDetailPage() {
     if (gradebookData) setGradebook(gradebookData);
   }, [gradebookData]);
 
+  useEffect(() => {
+    if (sectionData) setSections(sectionData);
+  }, [sectionData]);
+
   const topics = topicData ?? [];
   const courseName = courseData?.find((course) => course.id === courseId)?.title ?? courseId;
 
@@ -155,7 +154,6 @@ export default function TeacherCourseDetailPage() {
   return (
     <div className="page course-detail-page teacher-course-detail">
       <AppHeader />
-      <CourseIndexSidebar courseId={courseId} role="teacher" />
       <main className="container course-detail-content">
         <h1>{courseName}</h1>
         {coursesError && <p className="form-error" role="alert">{coursesError.message}</p>}
@@ -188,6 +186,9 @@ export default function TeacherCourseDetailPage() {
                 <Link to={`/teacher/courses/${courseId}/attendance`}>
                   <CalendarCheck size={17} />{isVi ? 'Quản lý Điểm danh' : 'Manage Attendance'}<ChevronRight size={15} />
                 </Link>
+                <Link to={`/teacher/courses/${courseId}/files`}>
+                  <FolderOpen size={17} />{isVi ? 'Quản lý Tài liệu / Slide' : 'Manage Files / Slides'}<ChevronRight size={15} />
+                </Link>
                 <Link to={`/teacher/courses/${courseId}/adaptive`}>
                   <SlidersHorizontal size={17} />{isVi ? 'Cài đặt thích ứng' : 'Adaptive settings'}<ChevronRight size={15} />
                 </Link>
@@ -200,7 +201,7 @@ export default function TeacherCourseDetailPage() {
                 className="btn btn-primary sm"
                 onClick={() => setAddingSection((v) => !v)}
               >
-                <Plus size={13} /> {isVi ? 'Thêm chương / khung mới' : 'Add chapter / section'}
+                <Plus size={13} /> {isVi ? 'Thêm buổi học / khung mới' : 'Add session / section'}
               </button>
               <button type="button" className="course-collapse-all" onClick={() => setOpenSections({})}>
                 {isVi ? 'Thu gọn toàn bộ' : 'Collapse all'}
@@ -213,44 +214,48 @@ export default function TeacherCourseDetailPage() {
                   type="text"
                   value={newSectionTitle}
                   onChange={(e) => setNewSectionTitle(e.target.value)}
-                  placeholder={isVi ? 'Ví dụ: Chương 6: Thuật toán nâng cao...' : 'e.g. Chapter 6: Advanced Algorithms...'}
+                  placeholder={isVi ? 'Ví dụ: Buổi học 6: Thuật toán nâng cao...' : 'e.g. Session 6: Advanced Algorithms...'}
                   style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
                 />
                 <button
                   type="button"
                   className="btn btn-primary sm"
-                  disabled={!newSectionTitle.trim()}
-                  onClick={() => {
+                  disabled={creatingSection || !newSectionTitle.trim()}
+                  onClick={async () => {
                     const title = newSectionTitle.trim();
-                    if (!title) return;
-                    const id = `ch-custom-${Date.now()}`;
-                    const next = [...customSections, { id, titleVi: title, titleEn: title }];
-                    setCustomSections(next);
+                    if (!title || creatingSection) return;
+                    setCreatingSection(true);
+                    setSectionError('');
                     try {
-                      localStorage.setItem(`g4lms.customSections.${courseId}`, JSON.stringify(next));
-                    } catch { /* ignore */ }
-                    setOpenSections((c) => ({ ...c, [id]: true }));
-                    setNewSectionTitle('');
-                    setAddingSection(false);
+                      const created = await api.createCourseSection(courseId, { titleVi: title, titleEn: title });
+                      setSections((prev) => [...prev, created]);
+                      setOpenSections((c) => ({ ...c, [created.id]: true }));
+                      setNewSectionTitle('');
+                      setAddingSection(false);
+                    } catch (reason) {
+                      setSectionError(reason instanceof Error ? reason.message : 'Không thể tạo buổi học mới.');
+                    } finally {
+                      setCreatingSection(false);
+                    }
                   }}
                 >
-                  {isVi ? 'Tạo khung' : 'Create'}
+                  {creatingSection ? (isVi ? 'Đang tạo...' : 'Creating...') : (isVi ? 'Tạo khung' : 'Create')}
                 </button>
                 <button type="button" className="btn btn-outline sm" onClick={() => setAddingSection(false)}>
                   {isVi ? 'Hủy' : 'Cancel'}
                 </button>
               </div>
             )}
+            {sectionError && <p className="form-error" role="alert">{sectionError}</p>}
 
-            {/* Các khung nội dung môn học (Tài liệu + từng Chương tích hợp Bài tập, Quiz, Tệp) */}
+            {/* Các khung nội dung môn học (Tài liệu + từng Buổi học tích hợp Bài tập, Quiz, Tệp) */}
             {topicsError && <p className="form-error" role="alert">{topicsError.message}</p>}
             {topicsLoading && <p className="muted">{isVi ? 'Đang tải nội dung...' : 'Loading course content...'}</p>}
             {(() => {
-              const contentSections = [
-                ...(sectionData ?? []).filter((s) => !['announcements', 'assignments', 'quizzes'].includes(s.id)),
-                ...customSections.map((c) => ({ ...c, items: [] })),
-              ];
-              const chapterSections = contentSections.filter((s) => s.id !== 'materials' && s.id !== 'overview');
+              const contentSections = sections.filter(
+                (s) => !['announcements', 'assignments', 'quizzes', 'materials', 'overview'].includes(s.id),
+              );
+              const chapterSections = contentSections;
               const allAssignments = assignmentsData ?? [];
               const allQuizzes = quizzesData ?? [];
               const allFiles = filesData ?? [];

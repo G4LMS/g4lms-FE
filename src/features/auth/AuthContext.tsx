@@ -36,8 +36,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem(KEY);
       setUserState(null);
     };
+    const syncRefreshedUser = () => {
+      setUserState(load());
+    };
     window.addEventListener('g4lms:unauthorized', clearExpiredSession);
-    return () => window.removeEventListener('g4lms:unauthorized', clearExpiredSession);
+    window.addEventListener('g4lms:user-updated', syncRefreshedUser);
+    return () => {
+      window.removeEventListener('g4lms:unauthorized', clearExpiredSession);
+      window.removeEventListener('g4lms:user-updated', syncRefreshedUser);
+    };
   }, []);
 
   const setUser = (nextUser: User | null) => {

@@ -359,6 +359,7 @@ export interface QuizAttempt {
 
 export interface SubmitQuizInput {
   answers: Record<string, string>;
+  nodeId?: string;
 }
 
 export interface HomeSlide {
@@ -729,7 +730,9 @@ export interface KnowledgeGraphNode {
 
 export interface KnowledgeGraphEdge {
   source: string;
+  source_type?: KnowledgeNodeType;
   target: string;
+  target_type?: KnowledgeNodeType;
   type: KnowledgeEdgeType;
   properties?: Record<string, unknown>;
 }

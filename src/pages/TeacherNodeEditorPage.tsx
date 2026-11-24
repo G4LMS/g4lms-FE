@@ -1,10 +1,11 @@
 import { ArrowLeft, FileText, HelpCircle, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
 import { useAsync } from '../features/common/useAsync';
 import { contentStatusLabel } from '../features/teacher/statusLabels';
+import type { ContentItem, QuestionItem } from '../types';
 
 type Tab = 'desc' | 'content' | 'quiz' | 'prereq';
 const BLOOM = ['Nhớ', 'Hiểu', 'Áp dụng', 'Phân tích', 'Đánh giá', 'Sáng tạo'];
@@ -17,10 +18,23 @@ export default function TeacherNodeEditorPage() {
   const [tab, setTab] = useState<Tab>('desc');
   const [name, setName] = useState<string | null>(null);
   const [desc, setDesc] = useState<string | null>(null);
-  const [qs, setQs] = useState<Record<string, { bloom?: string; difficulty?: string }>>({});
+  const [contents, setContents] = useState<ContentItem[] | null>(null);
+  const [editingContentId, setEditingContentId] = useState<string | null>(null);
+  const [contentDraft, setContentDraft] = useState<ContentItem | null>(null);
+  const [qs, setQs] = useState<Record<string, { bloom?: string; difficulty?: string; status?: QuestionItem['status'] }>>({});
   const [removed, setRemoved] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    setName(null);
+    setDesc(null);
+    setContents(null);
+    setEditingContentId(null);
+    setContentDraft(null);
+    setQs({});
+    setRemoved([]);
+  }, [nodeId]);
 
   if (!data) return (
     <div className="page">
@@ -32,15 +46,40 @@ export default function TeacherNodeEditorPage() {
     </div>
   );
   const back = () => nav(`/teacher/courses/${courseId}/graph`);
-  const questions = data.questions.filter((q) => !removed.includes(q.id));
+  const contentList = contents ?? data.contents;
+  const questions = data.questions
+    .filter((q) => !removed.includes(q.id))
+    .map((q) => ({
+      ...q,
+      bloom: qs[q.id]?.bloom ?? q.bloom,
+      difficulty: qs[q.id]?.difficulty ?? q.difficulty,
+      status: qs[q.id]?.status ?? q.status,
+    }));
   const nameV = name ?? data.name;
   const descV = desc ?? data.description;
+
+  const startEditContent = (item: ContentItem) => {
+    setEditingContentId(item.id);
+    setContentDraft({ ...item });
+  };
+
+  const applyContentDraft = () => {
+    if (!contentDraft) return;
+    setContents(contentList.map((c) => (c.id === contentDraft.id ? { ...contentDraft, title: contentDraft.title.trim() || c.title } : c)));
+    setEditingContentId(null);
+    setContentDraft(null);
+  };
 
   const saveAndBack = async () => {
     setSaving(true);
     setSaveError('');
     try {
-      await api.updateGraphNode(courseId, nodeId, { name: nameV.trim() || data.name, description: descV });
+      await api.saveNodeEditor(courseId, nodeId, {
+        name: nameV.trim() || data.name,
+        description: descV,
+        contents: contentList,
+        questions,
+      });
       back();
     } catch (reason) {
       setSaveError(reason instanceof Error ? reason.message : 'Không thể lưu thay đổi node.');
@@ -75,7 +114,7 @@ export default function TeacherNodeEditorPage() {
         ] as [Tab, string][]).map(([k, label]) => (
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
             {label}
-            {k === 'content' && <span className="n">{data.contents.length}</span>}
+            {k === 'content' && <span className="n">{contentList.length}</span>}
             {k === 'quiz' && <span className="n">{questions.length}</span>}
             {k === 'prereq' && <span className="n">{data.prerequisites.length}</span>}
           </button>
@@ -99,18 +138,55 @@ export default function TeacherNodeEditorPage() {
           <section className="ed-card">
             <header><div><small>CONTENT</small><h2>Nội dung học tập</h2></div><span>Các định nghĩa và ví dụ được trích từ tài liệu nguồn.</span></header>
             <div className="content-list">
-              {data.contents.map((c) => (
-                <div key={c.id} className="content-item">
+              {contentList.map((c) => (
+                <div key={c.id} className="content-item" style={{ flexWrap: 'wrap' }}>
                   <span className={`c-ico ${c.status === 'approved' ? 'blue' : 'green'}`}><FileText size={14} /></span>
-                  <div className="c-main">
-                    <div className="c-tags">
-                      <span className="tag-kind">{c.kind}</span>
-                      <span className={`tag-status ${c.status === 'approved' ? 'ok' : 'draft'}`}>{contentStatusLabel(c.status)}</span>
+                  {editingContentId === c.id && contentDraft ? (
+                    <div style={{ flex: 1, display: 'grid', gap: 8, minWidth: 260 }}>
+                      <input
+                        value={contentDraft.title}
+                        onChange={(e) => setContentDraft({ ...contentDraft, title: e.target.value })}
+                        placeholder="Tiêu đề nội dung"
+                        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)' }}
+                      />
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <select
+                          value={contentDraft.kind}
+                          onChange={(e) => setContentDraft({ ...contentDraft, kind: e.target.value as ContentItem['kind'] })}
+                        >
+                          <option value="Definition">Definition</option>
+                          <option value="Example">Example</option>
+                        </select>
+                        <select
+                          value={contentDraft.status}
+                          onChange={(e) => setContentDraft({ ...contentDraft, status: e.target.value as ContentItem['status'] })}
+                        >
+                          <option value="approved">Đã duyệt</option>
+                          <option value="draft">Bản nháp</option>
+                        </select>
+                        <input
+                          value={contentDraft.source}
+                          onChange={(e) => setContentDraft({ ...contentDraft, source: e.target.value })}
+                          placeholder="Nguồn tham chiếu"
+                          style={{ flex: 1, minWidth: 160, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)' }}
+                        />
+                        <button type="button" className="btn btn-primary sm" onClick={applyContentDraft}>Lưu mục</button>
+                        <button type="button" className="btn btn-outline sm" onClick={() => { setEditingContentId(null); setContentDraft(null); }}>Hủy</button>
+                      </div>
                     </div>
-                    <b>{c.title}</b>
-                    <small>{c.source}</small>
-                  </div>
-                  <button className="btn btn-outline sm">Chỉnh sửa</button>
+                  ) : (
+                    <>
+                      <div className="c-main">
+                        <div className="c-tags">
+                          <span className="tag-kind">{c.kind}</span>
+                          <span className={`tag-status ${c.status === 'approved' ? 'ok' : 'draft'}`}>{contentStatusLabel(c.status)}</span>
+                        </div>
+                        <b>{c.title}</b>
+                        <small>{c.source}</small>
+                      </div>
+                      <button type="button" className="btn btn-outline sm" onClick={() => startEditContent(c)}>Chỉnh sửa</button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
@@ -139,7 +215,15 @@ export default function TeacherNodeEditorPage() {
                         {DIFF.map((b) => <option key={b}>{b}</option>)}
                       </select>
                     </td>
-                    <td><span className={`tag-status ${q.status === 'approved' ? 'ok' : 'draft'}`}>{contentStatusLabel(q.status)}</span></td>
+                    <td>
+                      <select
+                        value={q.status}
+                        onChange={(e) => setQs((s) => ({ ...s, [q.id]: { ...s[q.id], status: e.target.value as QuestionItem['status'] } }))}
+                      >
+                        <option value="approved">Đã duyệt</option>
+                        <option value="draft">Bản nháp</option>
+                      </select>
+                    </td>
                   </tr>
                 ))}
               </tbody>

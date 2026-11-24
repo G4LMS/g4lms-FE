@@ -1,5 +1,5 @@
-import { Activity, FileText, Layers, LayoutList, Map as MapIcon, Network, PanelRight } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { Activity, Layers, LayoutList, Lock, Map as MapIcon, Network, PanelRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import type { KnowledgeEdgeType, KnowledgeNodeType } from '../../types';
@@ -8,16 +8,11 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { CourseIndexSidebar } from '../courses/CourseIndexSidebar';
 import { AppHeader } from '../layout/AppHeader';
 import { CourseAuthoringWizard } from '../teacher/CourseAuthoringWizard';
-import { DocPickerModal } from '../teacher/DocPickerModal';
-import { GenerationProgress } from '../teacher/GenerationProgress';
 import { LoView } from '../teacher/LoView';
 import { GraphHealthPanel } from './GraphHealthPanel';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas';
 import { StudentJourneyViews } from './StudentJourneyViews';
 import { StudentRelationMap } from './StudentRelationMap';
-import { TeacherReviewQueue } from './TeacherReviewQueue';
-
-type Phase = 'empty' | 'generating' | 'ready';
 
 interface Props {
   role: 'student' | 'teacher';
@@ -30,12 +25,10 @@ export function UnifiedCourseGraph({ role }: Props) {
   const { courseId = '' } = useParams();
   const nav = useNavigate();
 
-  const [phase, setPhase] = useState<Phase>('ready');
   const [editMode, setEditMode] = useState(canEdit);
-  const [picker, setPicker] = useState(false);
-  const [fileLabel, setFileLabel] = useState('');
   const [rightOpen, setRightOpen] = useState(true);
   const [healthOpen, setHealthOpen] = useState(false);
+  const [authoringMode, setAuthoringMode] = useState<'wizard' | 'editor'>('wizard');
   const [view, setView] = useState<'path' | 'structure' | 'list' | 'outcomes' | 'authoring'>(
     canEdit ? 'structure' : 'path',
   );
@@ -43,14 +36,10 @@ export function UnifiedCourseGraph({ role }: Props) {
   const [actionMessage, setActionMessage] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
 
-  const ready = phase === 'ready';
+  const ready = true;
   const { data: knowledgeGraph, loading: kgLoading, error: kgError } = useAsync(
-    () => (ready && courseId ? api.getKnowledgeGraph(courseId) : Promise.resolve(null)),
-    [ready, courseId, reloadTick],
-  );
-  const { data: files, error: filesError } = useAsync(
-    () => (canEdit && courseId ? api.getCoursePdfs(courseId) : Promise.resolve([])),
-    [canEdit, courseId],
+    () => (courseId ? api.getKnowledgeGraph(courseId) : Promise.resolve(null)),
+    [courseId, reloadTick],
   );
   const { data: studentCourses, error: studentCoursesError } = useAsync(
     () => (!canEdit ? api.getStudentCourses() : Promise.resolve([])),
@@ -58,54 +47,44 @@ export function UnifiedCourseGraph({ role }: Props) {
   );
   const { data: teacherCourses, error: teacherCoursesError } = useAsync(
     () => (canEdit ? api.getTeacherCourses() : Promise.resolve([])),
-    [canEdit],
+    [canEdit, reloadTick],
   );
-  const [queueBusy, setQueueBusy] = useState(false);
   const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null);
 
   useEffect(() => {
     setActionError('');
     setActionMessage('');
     setView(canEdit ? 'structure' : 'path');
+    setAuthoringMode('wizard');
   }, [courseId, canEdit]);
 
-  const serviceError = [kgError, filesError, studentCoursesError, teacherCoursesError].find(Boolean);
+  const serviceError = [kgError, studentCoursesError, teacherCoursesError].find(Boolean);
   const coursesList = canEdit ? (teacherCourses ?? []) : (studentCourses ?? []);
   const activeCourse = coursesList.find((course) => course.id === courseId);
   const courseName = activeCourse?.title ?? courseId;
   const courseCode = activeCourse?.code ?? courseId;
+  const isD5Completed = Boolean(
+    activeCourse &&
+      'published' in activeCourse &&
+      activeCourse.published &&
+      knowledgeGraph?.nodes.some((n) => n.type !== 'Course'),
+  );
+
+  useEffect(() => {
+    if (!isD5Completed && authoringMode === 'editor') {
+      setAuthoringMode('wizard');
+    }
+  }, [isD5Completed, authoringMode]);
 
   const refreshGraph = () => setReloadTick((tick) => tick + 1);
 
-  const startGenerate = async (label: string, uploadedFile?: File | null) => {
-    setActionError('');
-    setActionMessage('');
-    if (uploadedFile && canEdit) {
-      try {
-        await api.uploadCourseFile(courseId, uploadedFile);
-      } catch (reason) {
-        setActionError(reason instanceof Error ? reason.message : 'Không thể tải tệp PDF lên khóa học.');
-        return;
-      }
-    }
-    setFileLabel(label);
-    setPicker(false);
-    setPhase('generating');
-  };
-
-  const doneGenerating = useCallback(async () => {
-    try {
-      await api.generateKnowledgeGraph(courseId);
-      setActionMessage('AI đã trích xuất đồ thị tri thức từ tài liệu PDF và kiểm tra tính toàn vẹn (Validate Graph Integrity).');
-    } catch (reason) {
-      setActionError(reason instanceof Error ? reason.message : 'Không thể khởi tạo đồ thị từ PDF.');
-    } finally {
-      setPhase('ready');
-      setReloadTick((tick) => tick + 1);
-    }
-  }, [courseId]);
-
-  const handleAddNode = async (input: { name: string; nodeType: KnowledgeNodeType; parentId?: string | null }) => {
+  const handleAddNode = async (input: {
+    name: string;
+    nodeType: KnowledgeNodeType;
+    parentId?: string | null;
+    description?: string;
+    properties?: Record<string, unknown>;
+  }) => {
     if (!canEdit) return;
     setActionError('');
     setActionMessage('');
@@ -114,6 +93,8 @@ export function UnifiedCourseGraph({ role }: Props) {
         name: input.name,
         nodeType: input.nodeType,
         clusterId: input.parentId ?? null,
+        description: input.description,
+        properties: input.properties,
       });
       setActionMessage(`Đã thêm nút "${input.name}" (${input.nodeType}) vào đồ thị.`);
       refreshGraph();
@@ -122,7 +103,7 @@ export function UnifiedCourseGraph({ role }: Props) {
     }
   };
 
-  const handleAddEdge = async (input: { fromId: string; toId: string; kind: KnowledgeEdgeType }) => {
+  const handleAddEdge = async (input: { fromId: string; toId: string; kind: KnowledgeEdgeType; properties?: Record<string, unknown> }) => {
     if (!canEdit) return;
     setActionError('');
     setActionMessage('');
@@ -132,6 +113,7 @@ export function UnifiedCourseGraph({ role }: Props) {
       refreshGraph();
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : 'Không thể nối quan hệ.');
+      throw reason;
     }
   };
 
@@ -222,9 +204,11 @@ export function UnifiedCourseGraph({ role }: Props) {
     }
   };
 
+  const showAuthoringEditor = canEdit && view === 'authoring' && authoringMode === 'editor' && isD5Completed;
+
   return (
     <div className={`page graph-page${canEdit ? ' teacher' : ''}`}>
-      <AppHeader showEditToggle={canEdit} editMode={editMode} onEditModeChange={setEditMode} />
+      <AppHeader showEditToggle={showAuthoringEditor} editMode={editMode} onEditModeChange={setEditMode} />
       <CourseIndexSidebar courseId={courseId} role={role} topOffset={74} />
 
       <div className="crumbs top">
@@ -256,7 +240,14 @@ export function UnifiedCourseGraph({ role }: Props) {
                 {isVi ? 'Lộ trình' : 'Path'}
               </button>
             )}
-            <button type="button" className={view === 'structure' ? 'on' : ''} onClick={() => setView('structure')}>
+            <button
+              type="button"
+              className={view === 'structure' ? 'on' : ''}
+              onClick={() => {
+                setView('structure');
+                refreshGraph();
+              }}
+            >
               {!canEdit && <Network size={12} style={{ marginRight: 4 }} />}
               {canEdit ? (isVi ? 'Đồ thị tri thức' : 'Knowledge graph') : (isVi ? 'Bản đồ quan hệ' : 'Relation map')}
             </button>
@@ -267,30 +258,27 @@ export function UnifiedCourseGraph({ role }: Props) {
               </button>
             )}
             {canEdit && (
-              <button type="button" className={view === 'authoring' ? 'on' : ''} onClick={() => setView('authoring')}>
-                <Layers size={12} style={{ marginRight: 4 }} />
-                {isVi ? 'Dựng đồ thị (D1–D4)' : 'Authoring (D1–D4)'}
-              </button>
+              <>
+                <button type="button" className={view === 'authoring' ? 'on' : ''} onClick={() => setView('authoring')}>
+                  <Layers size={12} style={{ marginRight: 4 }} />
+                  {isVi ? 'Dựng đồ thị (D1–D4)' : 'Authoring (D1–D4)'}
+                </button>
+                <button type="button" className={view === 'outcomes' ? 'on' : ''} onClick={() => setView('outcomes')}>
+                  {isVi ? 'Chuẩn đầu ra' : 'Learning outcomes'}
+                </button>
+              </>
             )}
-            <button type="button" className={view === 'outcomes' ? 'on' : ''} onClick={() => setView('outcomes')}>
-              {isVi ? 'Chuẩn đầu ra' : 'Learning outcomes'}
-            </button>
           </div>
-          {canEdit && (
-            <>
-              <button
-                type="button"
-                className={`btn btn-outline sm${healthOpen ? ' on' : ''}`}
-                onClick={() => setHealthOpen((o) => !o)}
-              >
-                <Activity size={12} /> {isVi ? 'Sức khỏe' : 'Health'}
-              </button>
-              <button type="button" className="btn btn-outline sm" onClick={() => setPicker(true)}>
-                <FileText size={12} /> {isVi ? 'Tạo từ PDF' : 'Generate from PDF'}
-              </button>
-            </>
+          {showAuthoringEditor && (
+            <button
+              type="button"
+              className={`btn btn-outline sm${healthOpen ? ' on' : ''}`}
+              onClick={() => setHealthOpen((o) => !o)}
+            >
+              <Activity size={12} /> {isVi ? 'Tính hoàn thiện' : 'Completeness'}
+            </button>
           )}
-          {ready && view === 'structure' && !healthOpen && knowledgeGraph?.nodes.some((n) => n.type !== 'Course') && (
+          {canEdit && ready && (view === 'structure' || showAuthoringEditor) && !healthOpen && knowledgeGraph?.nodes.some((n) => n.type !== 'Course') && (
             <button
               type="button"
               className={`round-btn right${rightOpen ? '' : ' off'}`}
@@ -316,50 +304,112 @@ export function UnifiedCourseGraph({ role }: Props) {
         </p>
       )}
 
-      {canEdit && phase === 'empty' && (
-        <div className="empty-wrap">
-          <div className="empty-card">
-            <div className="empty-illu">
-              <span className="orbit">
-                <Network size={18} />
-              </span>
-            </div>
-            <h2>Môn học chưa có đồ thị tri thức</h2>
-            <p>
-              Tạo đồ thị kiến thức từ tài liệu PDF để AI trích xuất khái niệm, chuẩn đầu ra và quan hệ tiên quyết.
-            </p>
-            <button type="button" className="btn btn-primary" onClick={() => setPicker(true)}>
-              <FileText size={12} /> Tạo graph từ tài liệu
-            </button>
-          </div>
-        </div>
-      )}
-
-      {canEdit && phase === 'generating' && (
-        <div className="gen-page">
-          <GenerationProgress
-            fileLabel={fileLabel || (isVi ? 'Tài liệu khóa học' : 'Course material')}
-            onDone={() => void doneGenerating()}
-            onCancel={() => setPhase('ready')}
-            onChangeFile={() => setPicker(true)}
-          />
-        </div>
-      )}
-
       {ready && (
         <div className="graph-body" style={{ flex: 1, minHeight: 0 }}>
           {view === 'authoring' && canEdit ? (
-            <div className="graph-stage" style={{ overflowY: 'auto', padding: '18px 24px' }}>
-              <CourseAuthoringWizard
-                courseId={courseId}
-                courseName={courseName}
-                onPublishedGraph={() => {
-                  setView('structure');
-                  refreshGraph();
-                }}
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 18px', borderBottom: '1px solid var(--line)', background: '#fff', gap: 10, flexWrap: 'wrap' }}>
+                <div className="kg-view-switch">
+                  <button
+                    type="button"
+                    className={authoringMode === 'wizard' ? 'on' : ''}
+                    onClick={() => setAuthoringMode('wizard')}
+                  >
+                    <Layers size={12} style={{ marginRight: 4 }} />
+                    {isVi ? 'Quy trình 4 bước (D1–D4)' : '4-Step Wizard (D1–D4)'}
+                  </button>
+                  <button
+                    type="button"
+                    className={authoringMode === 'editor' ? 'on' : ''}
+                    disabled={!isD5Completed}
+                    title={
+                      !isD5Completed
+                        ? (isVi ? 'Trang hiệu chỉnh bị khóa cho đến khi hoàn thành D5 (Xuất bản Master Graph).' : 'Locked until D5 is completed.')
+                        : undefined
+                    }
+                    style={!isD5Completed ? { opacity: 0.55, cursor: 'not-allowed' } : undefined}
+                    onClick={() => {
+                      if (!isD5Completed) return;
+                      setAuthoringMode('editor');
+                      refreshGraph();
+                    }}
+                  >
+                    {isD5Completed ? <Network size={12} style={{ marginRight: 4 }} /> : <Lock size={12} style={{ marginRight: 4 }} />}
+                    {isVi ? (isD5Completed ? 'Hiệu chỉnh' : 'Hiệu chỉnh (Khóa · Chưa xong D5)') : (isD5Completed ? 'Edit' : 'Edit (Locked)')}
+                  </button>
+                </div>
+                <small className="muted-s">
+                  {authoringMode === 'wizard'
+                    ? (isVi ? 'Tạo khung môn học, bài học theo buổi học, quan hệ giữa các buổi học và xuất bản (D5).' : 'Author outline, session lessons, cross-session relations, and publish.')
+                    : (isVi ? 'Thêm/sửa/xóa node & cạnh và kiểm tra tính hoàn thiện đồ thị.' : 'Add/edit/delete nodes & edges and check graph completeness.')}
+                </small>
+              </div>
+              {authoringMode === 'wizard' ? (
+                <div className="graph-stage" style={{ overflowY: 'auto', padding: '18px 24px', flex: 1 }}>
+                  <CourseAuthoringWizard
+                    courseId={courseId}
+                    courseName={courseName}
+                    hasPublishedGraph={isD5Completed}
+                    onPublishedGraph={() => {
+                      setView('structure');
+                      refreshGraph();
+                    }}
+                  />
+                </div>
+              ) : !isD5Completed ? (
+                <div className="empty-wrap">
+                  <div className="empty-card">
+                    <Lock size={28} style={{ marginBottom: 8, color: 'var(--muted)' }} />
+                    <h2>Trang hiệu chỉnh đang bị khóa</h2>
+                    <p>Trang hiệu chỉnh chỉ mở sau khi hoàn thành Bước D5 (Xuất bản Master Graph).</p>
+                    <button type="button" className="btn btn-primary" onClick={() => setAuthoringMode('wizard')}>
+                      Quay lại quy trình D1–D5
+                    </button>
+                  </div>
+                </div>
+              ) : knowledgeGraph && knowledgeGraph.nodes.some((n) => n.type !== 'Course') ? (
+                <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}>
+                  <KnowledgeGraphCanvas
+                    courseId={courseId}
+                    data={knowledgeGraph}
+                    role={role}
+                    editMode={editMode}
+                    rightOpen={rightOpen && !healthOpen}
+                    focusRequest={focusRequest}
+                    onQuickUpdateNode={async (nodeId, input) => {
+                      await api.updateGraphNode(courseId, nodeId, input);
+                      setActionMessage(`Đã cập nhật nhanh nút "${input.name}".`);
+                      refreshGraph();
+                    }}
+                    onAddNode={handleAddNode}
+                    onAddEdge={handleAddEdge}
+                    onMergeNodes={handleMergeNodes}
+                    onDeleteNode={handleDeleteNode}
+                    onDeleteEdge={handleDeleteEdge}
+                    onApproveNode={handleApproveNode}
+                    onApproveEdge={handleApproveEdge}
+                    onOpenNodeEditor={(id) => nav(`/teacher/courses/${courseId}/nodes/${id}`)}
+                  />
+                  {healthOpen && (
+                    <GraphHealthPanel
+                      data={knowledgeGraph}
+                      onClose={() => setHealthOpen(false)}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="empty-wrap">
+                  <div className="empty-card">
+                    <h2>Chưa có đồ thị để hiệu chỉnh</h2>
+                    <p>Hãy hoàn thành quy trình D1–D4 để sinh đồ thị trước khi hiệu chỉnh thủ công.</p>
+                    <button type="button" className="btn btn-primary" onClick={() => setAuthoringMode('wizard')}>
+                      <Layers size={12} /> Mở quy trình D1–D4
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          ) : view === 'outcomes' ? (
+          ) : view === 'outcomes' && canEdit ? (
             <div className="graph-stage">
               <LoView courseId={courseId} />
             </div>
@@ -391,72 +441,14 @@ export function UnifiedCourseGraph({ role }: Props) {
               />
             ) : (
               <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}>
-              {canEdit && (
-                <TeacherReviewQueue
+                <KnowledgeGraphCanvas
+                  courseId={courseId}
                   data={knowledgeGraph}
-                  busy={queueBusy}
-                  onFocusNode={(nodeId) => setFocusRequest({ id: nodeId, nonce: Date.now() })}
-                  onApproveNode={handleApproveNode}
-                  onRejectNode={handleDeleteNode}
-                  onApproveEdge={handleApproveEdge}
-                  onRejectEdge={handleDeleteEdge}
-                  onApproveAll={async (items) => {
-                    setQueueBusy(true);
-                    setActionError('');
-                    try {
-                      for (const item of items) {
-                        if (item.kind === 'node') {
-                          await api.updateGraphNode(courseId, item.id, { status: 'approved', approved: true });
-                        } else if (item.fromId && item.toId && item.edgeType) {
-                          await api.approveGraphEdge(courseId, {
-                            fromId: item.fromId,
-                            toId: item.toId,
-                            edgeType: item.edgeType,
-                          });
-                        }
-                      }
-                      setActionMessage(`Đã duyệt nhanh ${items.length} mục AI đề xuất.`);
-                      refreshGraph();
-                    } catch (reason) {
-                      setActionError(reason instanceof Error ? reason.message : 'Không thể duyệt hàng loạt.');
-                    } finally {
-                      setQueueBusy(false);
-                    }
-                  }}
+                  role={role}
+                  editMode={false}
+                  rightOpen={rightOpen}
+                  focusRequest={focusRequest}
                 />
-              )}
-              <KnowledgeGraphCanvas
-                courseId={courseId}
-                data={knowledgeGraph}
-                role={role}
-                editMode={editMode}
-                rightOpen={rightOpen && !healthOpen}
-                focusRequest={focusRequest}
-                onQuickUpdateNode={
-                  canEdit
-                    ? async (nodeId, input) => {
-                        await api.updateGraphNode(courseId, nodeId, input);
-                        setActionMessage(`Đã cập nhật nhanh nút "${input.name}".`);
-                        refreshGraph();
-                      }
-                    : undefined
-                }
-                onAddNode={canEdit ? handleAddNode : undefined}
-                onAddEdge={canEdit ? handleAddEdge : undefined}
-                onMergeNodes={canEdit ? handleMergeNodes : undefined}
-                onDeleteNode={canEdit ? handleDeleteNode : undefined}
-                onDeleteEdge={canEdit ? handleDeleteEdge : undefined}
-                onApproveNode={canEdit ? handleApproveNode : undefined}
-                onApproveEdge={canEdit ? handleApproveEdge : undefined}
-                onOpenNodeEditor={canEdit ? (id) => nav(`/teacher/courses/${courseId}/nodes/${id}`) : undefined}
-                onStartLearning={!canEdit ? (nodeId) => nav(`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`) : undefined}
-              />
-              {canEdit && healthOpen && (
-                <GraphHealthPanel
-                  data={knowledgeGraph}
-                  onClose={() => setHealthOpen(false)}
-                />
-              )}
               </div>
             )
           ) : (
@@ -470,7 +462,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                 <h2>Môn học chưa có đồ thị tri thức</h2>
                 <p>
                   {canEdit
-                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo chương → D3: Quan hệ liên chương → D4: Xuất bản Master Graph) để kiểm soát từng chương ~20 node.'
+                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo buổi học → D3: Quan hệ giữa các buổi học → D4: Xuất bản Master Graph) để kiểm soát từng buổi học ~20 node.'
                     : 'Giảng viên chưa công bố đồ thị tri thức cho môn học này.'}
                 </p>
                 {canEdit && (
@@ -478,23 +470,12 @@ export function UnifiedCourseGraph({ role }: Props) {
                     <button type="button" className="btn btn-primary" onClick={() => setView('authoring')}>
                       <Layers size={12} /> Bắt đầu dựng đồ thị (D1–D4)
                     </button>
-                    <button type="button" className="btn btn-outline" onClick={() => setPicker(true)}>
-                      <FileText size={12} /> Tạo nhanh từ 1 PDF
-                    </button>
                   </div>
                 )}
               </div>
             </div>
           )}
         </div>
-      )}
-
-      {canEdit && picker && (
-        <DocPickerModal
-          files={files ?? []}
-          onClose={() => setPicker(false)}
-          onSubmit={(label, uploadedFile) => void startGenerate(label, uploadedFile)}
-        />
       )}
     </div>
   );

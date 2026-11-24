@@ -1,6 +1,6 @@
 import type {
   AdminAnnouncementRecord, AdminCourseOption, AdminCourseRecord, AdminEnrollment, AdminStats, AdminStudentOption, AdminUser, Announcement, Assignment, AssignmentSubmissionRecord, AttendanceSession, ChapterLessonItem, ClusterView, ConversationMessage, ConversationSummary,
-  CourseFile, CourseOutlineData, CourseOverallGrade, CourseRecommendation, CourseRelationItem, CreateAnnouncementInput, CreateAssignmentInput, CreateAttendanceSessionInput,
+  CourseFile, CourseOutlineData, CourseOverallGrade, CourseRecommendation, CourseRelationItem, CourseSection, CreateAnnouncementInput, CreateAssignmentInput, CreateAttendanceSessionInput,
   CreateConversationInput, CreateQuizInput, CreateTeacherCourseInput, DashboardData, HeatSpot, HomeSlide,
   KnowledgeEdgeType, KnowledgeGraphData, KnowledgeGraphEdge, KnowledgeGraphNode, KnowledgeNodeType,
   LearningOutcome, LoginHeroStat, MessageContact, MessagePreview, NodeDetail, NodeEditorData,
@@ -88,6 +88,24 @@ function persistPdfFiles(): void {
   saveStorage('g4lms.mock.pdfFiles', pdfFilesStore);
 }
 
+const courseSectionsStore: Record<string, CourseSection[]> = loadStorage<Record<string, CourseSection[]>>(
+  'g4lms.mock.courseSections',
+  {},
+);
+
+function persistCourseSections(): void {
+  saveStorage('g4lms.mock.courseSections', courseSectionsStore);
+}
+
+const nodeEditorStore: Record<string, NodeEditorData> = loadStorage<Record<string, NodeEditorData>>(
+  'g4lms.mock.nodeEditors',
+  {},
+);
+
+function persistNodeEditors(): void {
+  saveStorage('g4lms.mock.nodeEditors', nodeEditorStore);
+}
+
 interface AuthoringState {
   outline: CourseOutlineData;
   outlineState: OutlineState;
@@ -127,18 +145,83 @@ function persistAuthoring(): void {
 
 function ensureAuthoringState(courseId: string): AuthoringState {
   if (!authoringStore.has(courseId)) {
-    authoringStore.set(courseId, {
-      outline: { chapters: [], learningOutcomes: [] },
-      outlineState: 'DRAFT',
-      outlineRevision: 1,
-      lessonsByChapter: {},
-      relations: [],
-      relationRevision: 1,
-      masterVersion: 0,
-    });
+    const course = teacherCoursesStore.find((c) => c.id === courseId || c.code.toLowerCase() === courseId.toLowerCase());
+    const hasExistingKg =
+      (course?.published && course.totalNodes > 0) ||
+      Boolean(knowledgeGraphStore.get(courseId)?.nodes.some((n) => n.type !== 'Course'));
+
+    if (hasExistingKg) {
+      const baseSections = (courseId === 'CO3093' ? networkCourseSections : studentCourseSections).filter(
+        (s) => !['announcements', 'assignments', 'quizzes', 'materials', 'overview'].includes(s.id),
+      );
+      authoringStore.set(courseId, {
+        outline: {
+          chapters: baseSections.map((s) => ({
+            id: s.id,
+            title: s.titleVi,
+            loCodes: ['LO1'],
+            state: 'PUBLISHED',
+            revision: 1,
+            documentCount: 1,
+          })),
+          learningOutcomes: data.learningOutcomes.map((lo) => ({
+            code: lo.id,
+            description: lo.title,
+          })),
+        },
+        outlineState: 'OUTLINE_APPROVED',
+        outlineRevision: 2,
+        lessonsByChapter: {},
+        relations: [],
+        relationRevision: 2,
+        masterVersion: 1,
+      });
+    } else {
+      authoringStore.set(courseId, {
+        outline: { chapters: [], learningOutcomes: [] },
+        outlineState: 'DRAFT',
+        outlineRevision: 1,
+        lessonsByChapter: {},
+        relations: [],
+        relationRevision: 1,
+        masterVersion: 0,
+      });
+    }
     persistAuthoring();
   }
-  return authoringStore.get(courseId)!;
+  const st = authoringStore.get(courseId)!;
+  let migrated = false;
+  const replaceSessionTerm = (s: string) =>
+    s
+      .replace(/liên chương/g, 'giữa các buổi học')
+      .replace(/Chương(?!\s+trình)/g, 'Buổi học')
+      .replace(/chương(?!\s+trình)/g, 'buổi học');
+
+  st.outline.chapters.forEach((ch) => {
+    const next = replaceSessionTerm(ch.title);
+    if (next !== ch.title) {
+      ch.title = next;
+      migrated = true;
+    }
+  });
+  st.relations.forEach((rel) => {
+    if (rel.reason) {
+      const next = replaceSessionTerm(rel.reason);
+      if (next !== rel.reason) {
+        rel.reason = next;
+        migrated = true;
+      }
+    }
+    if (rel.aiComment) {
+      const next = replaceSessionTerm(rel.aiComment);
+      if (next !== rel.aiComment) {
+        rel.aiComment = next;
+        migrated = true;
+      }
+    }
+  });
+  if (migrated) persistAuthoring();
+  return st;
 }
 
 function normalizeKnowledgeEdgeType(kind: string): KnowledgeEdgeType {
@@ -189,17 +272,21 @@ function buildFallbackKnowledgeGraph(courseId: string): KnowledgeGraphData {
   base.clusters.forEach((cluster) => {
     const chapterId = `ch${cluster.index}`;
     const clusterNodeId = `${courseId}_${cluster.id}`;
+    const richCluster = resolveRichConceptContent(cluster.name);
     addNode({
       id: clusterNodeId,
       name: cluster.name,
       type: 'Concept',
-      description: `Chủ đề trọng tâm #${cluster.index}: ${cluster.name} (${cluster.nodeCount} khái niệm thành phần).`,
+      description: richCluster.description,
       properties: {
         chapter_id: chapterId,
         default_week: cluster.index,
         duration_min: 40,
         confidence: cluster.approved ? 0.92 : 0.78,
         level: 'topic',
+        outcome: richCluster.outcome,
+        details: richCluster.details,
+        evidence: richCluster.evidence,
         status: cluster.approved ? 'approved' : 'proposed',
         node_count: cluster.nodeCount,
       },
@@ -220,7 +307,33 @@ function buildFallbackKnowledgeGraph(courseId: string): KnowledgeGraphData {
       }
     });
 
-    const inner = data.buildClusterView(cluster.id);
+    const inner =
+      cluster.id === 'complexity'
+        ? {
+            nodes: [
+              { id: 'c1', name: 'Khái niệm độ phức tạp', status: 'approved' as const, ghost: false },
+              { id: 'c2', name: 'Ký pháp Big-O, Ω, Θ', status: 'approved' as const, ghost: false },
+              { id: 'c3', name: 'Phân tích vòng lặp', status: 'approved' as const, ghost: false },
+              { id: 'c4', name: 'Độ phức tạp đệ quy', status: 'proposed' as const, ghost: false },
+              { id: 'c5', name: 'Độ phức tạp không gian', status: 'proposed' as const, ghost: false },
+            ],
+            edges: [
+              { from: 'c1', to: 'c2', kind: 'prereq' as const },
+              { from: 'c2', to: 'c3', kind: 'prereq' as const },
+              { from: 'c3', to: 'c4', kind: 'prereq' as const },
+              { from: 'c2', to: 'c5', kind: 'prereq' as const },
+            ],
+          }
+        : data.buildClusterView(cluster.id);
+    const firstInnerId = inner.nodes.find((n) => !n.ghost)?.id;
+    if (firstInnerId) {
+      edges.push({
+        source: clusterNodeId,
+        target: `${courseId}_${firstInnerId}`,
+        type: 'PREREQUISITE',
+        properties: { status: 'approved', confidence: 0.94, reason: `Nắm tổng quan ${cluster.name} trước khi đi vào chi tiết.` },
+      });
+    }
     inner.nodes
       .filter((n) => !n.ghost)
       .forEach((innerNode, idx) => {
@@ -255,11 +368,15 @@ function buildFallbackKnowledgeGraph(courseId: string): KnowledgeGraphData {
         });
 
         const slideId = `${subId}_slide_${idx + 1}`;
+        const slideQuote =
+          rich.evidence[0]?.quote ??
+          rich.details[0]?.evidence?.[0]?.quote ??
+          rich.description;
         addNode({
           id: slideId,
-          name: `Slide ${cluster.index}.${idx + 1}: ${innerNode.name}`,
+          name: `${rich.evidence[0]?.slideId ?? `Slide ${cluster.index}.${idx + 1}`}: ${innerNode.name}`,
           type: 'Content',
-          description: `Tài liệu bài giảng giải thích chi tiết khái niệm ${innerNode.name}.`,
+          description: slideQuote,
           properties: { chapter_id: chapterId, page: idx + 1 },
         });
         edges.push({
@@ -344,19 +461,73 @@ async function ensureKnowledgeGraph(courseId: string, forceGenerate = false): Pr
   const normId = courseId.trim();
   if (!forceGenerate && knowledgeGraphStore.has(normId)) {
     const existing = knowledgeGraphStore.get(normId)!;
-    const course = teacherCoursesStore.find((c) => c.id === normId || c.code.toLowerCase() === normId.toLowerCase());
-    if (course && course.totalNodes === 0) {
-      return { nodes: [], edges: [] };
+    if (existing.nodes.some((n) => n.type !== 'Course')) {
+      const hasWeekData = existing.nodes.some((n) => n.type === 'Concept' && n.properties?.default_week != null);
+      const hasRichDetails = existing.nodes.some(
+        (n) => n.type === 'Concept' && (Array.isArray(n.properties?.details) || Array.isArray(n.properties?.aspects)),
+      );
+      const hasComplexityChain =
+        normId !== 'CO2003' ||
+        existing.edges.some((e) => e.source === 'CO2003_complexity' && e.target === 'CO2003_c1' && e.type === 'PREREQUISITE');
+      if (hasWeekData && hasRichDetails && hasComplexityChain) {
+        return existing;
+      }
     }
-    if (!existing.nodes.some((n) => n.type !== 'Course')) {
-      return { nodes: [], edges: [] };
-    }
-    const hasWeekData = existing.nodes.some((n) => n.type === 'Concept' && n.properties?.default_week != null);
-    const hasRichDetails = existing.nodes.some(
-      (n) => n.type === 'Concept' && (Array.isArray(n.properties?.details) || Array.isArray(n.properties?.aspects)),
-    );
-    if (hasWeekData && hasRichDetails) {
-      return existing;
+  }
+
+  // Build preview/published graph from D1–D5 authoring state if available for new courses
+  if (!forceGenerate && authoringStore.has(normId)) {
+    const st = ensureAuthoringState(normId);
+    const readyChapters = st.outline.chapters.filter((c) => c.state === 'LESSON_APPROVED' || c.state === 'PUBLISHED');
+    if (readyChapters.length > 0) {
+      const course = teacherCoursesStore.find((c) => c.id === normId || c.code.toLowerCase() === normId.toLowerCase());
+      const nodes: KnowledgeGraphNode[] = [
+        {
+          id: normId,
+          name: course ? `${course.title} (${course.code})` : normId,
+          type: 'Course',
+          description: `Master Graph v${Math.max(1, st.masterVersion)}`,
+          properties: { code: course?.code ?? normId },
+        },
+      ];
+      const edges: KnowledgeGraphEdge[] = [];
+      for (const lo of st.outline.learningOutcomes) {
+        const loId = `${normId}.${lo.code.replace(/\./g, '')}`;
+        nodes.push({ id: loId, name: `${lo.code}: ${lo.description}`, type: 'LO', properties: { code: lo.code, status: 'approved' } });
+        edges.push({ source: loId, target: normId, type: 'DEVELOP', properties: { status: 'approved' } });
+      }
+      for (const ch of readyChapters) {
+        const lessons = (st.lessonsByChapter[ch.id] ?? []).filter((l) => l.decision !== 'REJECT');
+        lessons.forEach((l, idx) => {
+          nodes.push({
+            id: l.id,
+            name: l.title,
+            type: 'Concept',
+            description: l.content,
+            properties: { chapter_id: ch.id, default_week: l.defaultWeek ?? 1, status: 'approved', sourceRef: l.sourceRef },
+          });
+          const loCode = l.loCodes[0] ?? st.outline.learningOutcomes[0]?.code;
+          if (loCode) {
+            const loId = `${normId}.${loCode.replace(/\./g, '')}`;
+            edges.push({ source: l.id, target: loId, type: 'DEVELOP', properties: { status: 'approved' } });
+          }
+          if (idx > 0) {
+            edges.push({ source: lessons[idx - 1].id, target: l.id, type: 'PREREQUISITE', properties: { status: 'approved' } });
+          }
+        });
+      }
+      for (const rel of st.relations.filter((r) => r.decision !== 'REJECT')) {
+        edges.push({
+          source: rel.sourceId,
+          target: rel.targetId,
+          type: rel.relationType,
+          properties: { status: 'approved', sourceRef: rel.sourceRef },
+        });
+      }
+      const built = { nodes, edges };
+      knowledgeGraphStore.set(normId, built);
+      persistKnowledgeGraph();
+      return built;
     }
   }
 
@@ -927,7 +1098,37 @@ export const mockApi = {
 
     return wait(undefined);
   },
-  getCourseSections: (courseId: string) => wait(courseId === 'CO3093' ? networkCourseSections : studentCourseSections),
+  getCourseSections: (courseId: string): Promise<CourseSection[]> => {
+    const base =
+      courseId === 'CO3093'
+        ? networkCourseSections
+        : courseId === 'CO2003'
+          ? studentCourseSections
+          : [];
+    return wait(courseSectionsStore[courseId] ?? base);
+  },
+  createCourseSection: (courseId: string, input: { titleVi: string; titleEn?: string }): Promise<CourseSection> => {
+    const base =
+      courseId === 'CO3093'
+        ? networkCourseSections
+        : courseId === 'CO2003'
+          ? studentCourseSections
+          : [];
+    if (!courseSectionsStore[courseId]) {
+      courseSectionsStore[courseId] = base.map((s) => ({ ...s, items: [...s.items] }));
+    }
+    const titleVi = input.titleVi.trim();
+    const titleEn = (input.titleEn ?? input.titleVi).trim();
+    const created: CourseSection = {
+      id: `ch-custom-${Date.now()}`,
+      titleVi,
+      titleEn,
+      items: [],
+    };
+    courseSectionsStore[courseId].push(created);
+    persistCourseSections();
+    return wait(created);
+  },
   getStudentGrades: (courseId: string): Promise<StudentGradeItem[]> => wait(studentGradesByCourse[courseId] ?? []),
   getStudentGradeSummary: (): Promise<CourseOverallGrade[]> => wait(courseOverallGrades),
   getStudentAttendance(courseId: string): Promise<StudentAttendanceData> {
@@ -1273,11 +1474,13 @@ export const mockApi = {
     if (!fixture || fixture.quiz.status !== 'published') return Promise.reject(new Error('Không tìm thấy bài kiểm tra.'));
     return wait(fixture.quiz);
   },
-  startQuizAttempt(courseId: string, quizId: string): Promise<QuizAttempt> {
+  startQuizAttempt(courseId: string, quizId: string, unlimited = false): Promise<QuizAttempt> {
     const fixture = quizFixtures.find(({ quiz }) => quiz.id === quizId && quiz.courseId === courseId);
     if (!fixture || fixture.quiz.status !== 'published') return Promise.reject(new Error('Bài kiểm tra không khả dụng.'));
-    if (fixture.quiz.attemptsUsed >= fixture.quiz.attemptsAllowed) return Promise.reject(new Error('Bạn đã sử dụng hết số lần làm bài.'));
-    fixture.quiz.attemptsUsed += 1;
+    if (!unlimited && fixture.quiz.attemptsUsed >= fixture.quiz.attemptsAllowed) {
+      return Promise.reject(new Error('Bạn đã sử dụng hết số lần làm bài.'));
+    }
+    if (!unlimited) fixture.quiz.attemptsUsed += 1;
     const startedAt = new Date();
     const attempt: QuizAttempt = {
       id: `attempt-${Date.now()}`,
@@ -1290,7 +1493,7 @@ export const mockApi = {
     attempts.set(attempt.id, attempt);
     return wait(attempt);
   },
-  submitQuizAttempt(quizId: string, attemptId: string, input: SubmitQuizInput): Promise<QuizAttempt> {
+  async submitQuizAttempt(quizId: string, attemptId: string, input: SubmitQuizInput): Promise<QuizAttempt> {
     const fixture = quizFixtures.find(({ quiz }) => quiz.id === quizId);
     const attempt = attempts.get(attemptId);
     if (!fixture || !attempt || attempt.quizId !== quizId || attempt.submittedAt) {
@@ -1298,6 +1501,7 @@ export const mockApi = {
     }
     const correctCount = Object.entries(fixture.answerKey)
       .filter(([questionId, answer]) => input.answers[questionId] === answer).length;
+    const pct = attempt.totalQuestions > 0 ? Math.round((correctCount / attempt.totalQuestions) * 100) : 0;
     const submitted: QuizAttempt = {
       ...attempt,
       submittedAt: new Date().toISOString(),
@@ -1305,6 +1509,40 @@ export const mockApi = {
       score: correctCount / attempt.totalQuestions * attempt.maxScore,
     };
     attempts.set(attemptId, submitted);
+
+    if (pct >= 70) {
+      const courseId = fixture.quiz.courseId;
+      const kg = await ensureKnowledgeGraph(courseId);
+      const chMatch = quizId.match(/ch(\d+)/i);
+      const targetChapter = chMatch ? `ch${chMatch[1]}` : null;
+      let updated = false;
+
+      if (input.nodeId) {
+        const targetNode = kg.nodes.find((n) => n.id === input.nodeId);
+        if (targetNode) {
+          targetNode.properties = {
+            ...(targetNode.properties ?? {}),
+            learning_state: 'mastered',
+            mastery: pct,
+          };
+          updated = true;
+        }
+      }
+
+      if (targetChapter) {
+        kg.nodes.forEach((n) => {
+          const ch = String(n.properties?.chapter_id ?? n.properties?.chapterId ?? '');
+          if (ch === targetChapter && n.type !== 'Content' && n.type !== 'Course' && n.type !== 'LO') {
+            if (!input.nodeId || n.id === input.nodeId || n.properties?.learning_state === 'learning') {
+              n.properties = { ...(n.properties ?? {}), learning_state: 'mastered', mastery: pct };
+              updated = true;
+            }
+          }
+        });
+      }
+
+      if (updated) persistKnowledgeGraph();
+    }
     return wait(submitted);
   },
   getLearningOutcomes: (_courseId: string): Promise<LearningOutcome[]> => wait(data.learningOutcomes),
@@ -1318,6 +1556,18 @@ export const mockApi = {
     return wait({
       nodes: kg.nodes.map((n) => ({ ...n, properties: { ...(n.properties ?? {}) } })),
       edges: kg.edges.map((e) => ({ ...e, properties: { ...(e.properties ?? {}) } })),
+    }, 60);
+  },
+  async saveKnowledgeGraph(courseId: string, graph: KnowledgeGraphData): Promise<KnowledgeGraphData> {
+    const cloned: KnowledgeGraphData = {
+      nodes: (graph.nodes ?? []).map((n) => ({ ...n, properties: { ...(n.properties ?? {}) } })),
+      edges: (graph.edges ?? []).map((e) => ({ ...e, properties: { ...(e.properties ?? {}) } })),
+    };
+    knowledgeGraphStore.set(courseId, cloned);
+    persistKnowledgeGraph();
+    return wait({
+      nodes: cloned.nodes.map((n) => ({ ...n, properties: { ...(n.properties ?? {}) } })),
+      edges: cloned.edges.map((e) => ({ ...e, properties: { ...(e.properties ?? {}) } })),
     }, 60);
   },
   async generateKnowledgeGraph(courseId: string): Promise<KnowledgeGraphData> {
@@ -1389,23 +1639,50 @@ export const mockApi = {
     const kg = await ensureKnowledgeGraph(courseId);
     const nodeType: KnowledgeNodeType = input.nodeType ?? 'Concept';
     const id = `${String(nodeType).toLowerCase()}_${Date.now()}`;
+    const defaultKind =
+      nodeType === 'Assignment' || nodeType === 'Item'
+        ? 'assessment'
+        : nodeType === 'LO'
+          ? 'outcome'
+          : 'structure';
     const newKgNode: KnowledgeGraphNode = {
       id,
       name: input.name.trim(),
       type: nodeType,
       description: input.description?.trim() ?? '',
-      properties: { status: 'approved', custom: true, ...(input.properties ?? {}) },
+      properties: {
+        kind: defaultKind,
+        level: 'lesson',
+        status: 'approved',
+        confidence: 1,
+        custom: true,
+        ...(input.properties ?? {}),
+      },
     };
     kg.nodes.push(newKgNode);
     if (nodeType === 'LO') {
       const courseRoot = kg.nodes.find((n) => n.type === 'Course');
       if (courseRoot) {
-        kg.edges.push({ source: id, target: courseRoot.id, type: 'DEVELOP', properties: { status: 'approved', confidence: 1 } });
+        kg.edges.push({
+          source: id,
+          source_type: nodeType,
+          target: courseRoot.id,
+          target_type: courseRoot.type,
+          type: 'DEVELOP',
+          properties: { basis: 'manual', status: 'approved', confidence: 1 },
+        });
       }
     } else if (input.clusterId && kg.nodes.some((n) => n.id === input.clusterId)) {
       const parent = kg.nodes.find((n) => n.id === input.clusterId);
       const rel: KnowledgeEdgeType = parent?.type === 'LO' ? 'DEVELOP' : 'PART_OF';
-      kg.edges.push({ source: id, target: input.clusterId, type: rel, properties: { status: 'approved', confidence: 1 } });
+      kg.edges.push({
+        source: id,
+        source_type: nodeType,
+        target: input.clusterId,
+        target_type: parent?.type,
+        type: rel,
+        properties: { basis: 'manual', status: 'approved', confidence: 1 },
+      });
     }
     persistKnowledgeGraph();
     return wait({ ...newKgNode });
@@ -1495,12 +1772,23 @@ export const mockApi = {
         }
       }
     }
+    const sourceNode = kg.nodes.find((n) => n.id === input.fromId);
+    const targetNode = kg.nodes.find((n) => n.id === input.toId);
     if (!kg.edges.some((e) => e.source === input.fromId && e.target === input.toId && e.type === edgeType)) {
       kg.edges.push({
         source: input.fromId,
+        source_type: sourceNode?.type,
         target: input.toId,
+        target_type: targetNode?.type,
         type: edgeType,
-        properties: { status: 'approved', confidence: 1, custom: true, ...(input.properties ?? {}) },
+        properties: {
+          basis: 'manual',
+          confidence: 1,
+          strength: edgeType === 'PREREQUISITE' ? 'hard' : undefined,
+          status: 'approved',
+          custom: true,
+          ...(input.properties ?? {}),
+        },
       });
     }
     persistKnowledgeGraph();
@@ -1580,23 +1868,36 @@ export const mockApi = {
   getReviewQueue: (_courseId: string): Promise<QueueSummary> => wait(data.reviewQueue),
   getHeatSpot: (clusterId?: string): Promise<HeatSpot> => wait(data.heatSpots[clusterId ?? ''] ?? data.heatSpots.pointer, 60),
   getCourseFiles(courseId: string): Promise<CourseFile[]> {
-    const saved = pdfFilesStore
-      .filter((file) => file.courseId === courseId)
-      .map((file) => ({
+    const seen = new Set<string>();
+    const result: CourseFile[] = [];
+    for (const file of uploadedFiles) {
+      if (file.courseId !== courseId) continue;
+      const key = `${file.name}:${file.sizeBytes}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(file);
+    }
+    for (const file of pdfFilesStore) {
+      if (file.courseId !== courseId) continue;
+      const key = `${file.name}:${file.sizeBytes}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
         id: file.id,
         courseId,
         name: file.name,
         mimeType: file.mimeType,
         sizeBytes: file.sizeBytes,
         uploadedAt: file.uploadedAt,
-      }));
-    return wait([...uploadedFiles.filter((file) => file.courseId === courseId), ...saved]);
+      });
+    }
+    return wait(result);
   },
   uploadCourseFile(courseId: string, file: File): Promise<CourseFile> {
     const allowed = /\.(pdf|ppt|pptx|doc|docx|mp4|mov|zip)$/i.test(file.name);
     if (!allowed) return Promise.reject(new Error('Định dạng tệp không được hỗ trợ.'));
-    if (file.size === 0 || file.size > 50 * 1024 * 1024) {
-      return Promise.reject(new Error('Tệp phải có dung lượng từ 1 byte đến 50 MB.'));
+    if (file.size === 0) {
+      return Promise.reject(new Error('Tệp không được để trống (0 byte).'));
     }
     const uploadedAt = new Date().toISOString();
     const item: CourseFile = {
@@ -1624,11 +1925,59 @@ export const mockApi = {
   getCoursePdfs: (courseId: string): Promise<PdfFile[]> =>
     wait(pdfFilesStore.filter((file) => file.courseId === courseId)),
   getLoChains: (_courseId: string) => wait(data.loChains),
-  getNodeEditor: (nodeId: string): Promise<NodeEditorData> => wait(data.buildNodeEditor(nodeId)),
+  getNodeEditor: (nodeId: string): Promise<NodeEditorData> => {
+    if (nodeEditorStore[nodeId]) {
+      return wait({
+        ...nodeEditorStore[nodeId],
+        contents: nodeEditorStore[nodeId].contents.map((c) => ({ ...c })),
+        questions: nodeEditorStore[nodeId].questions.map((q) => ({ ...q })),
+      });
+    }
+    const built = data.buildNodeEditor(nodeId);
+    for (const kg of knowledgeGraphStore.values()) {
+      const found = kg.nodes.find((n) => n.id === nodeId);
+      if (found) {
+        built.name = found.name || built.name;
+        if (found.description) built.description = found.description;
+        break;
+      }
+    }
+    return wait(built);
+  },
+  async saveNodeEditor(
+    courseId: string,
+    nodeId: string,
+    input: {
+      name?: string;
+      description?: string;
+      contents?: NodeEditorData['contents'];
+      questions?: NodeEditorData['questions'];
+    },
+  ): Promise<NodeEditorData> {
+    const current = nodeEditorStore[nodeId] ?? data.buildNodeEditor(nodeId);
+    const updated: NodeEditorData = {
+      ...current,
+      name: input.name !== undefined ? input.name.trim() || current.name : current.name,
+      description: input.description !== undefined ? input.description : current.description,
+      contents: input.contents ? input.contents.map((c) => ({ ...c })) : current.contents,
+      questions: input.questions ? input.questions.map((q) => ({ ...q })) : current.questions,
+    };
+    nodeEditorStore[nodeId] = updated;
+    persistNodeEditors();
+
+    const kg = await ensureKnowledgeGraph(courseId);
+    const kgNode = kg.nodes.find((n) => n.id === nodeId);
+    if (kgNode) {
+      kgNode.name = updated.name;
+      kgNode.description = updated.description;
+      persistKnowledgeGraph();
+    }
+    return wait(updated);
+  },
 
   /* ==================== D1–D5 Authoring Workflow Mock ==================== */
   async uploadCourseSyllabus(courseId: string, file: File): Promise<{ syllabusId: string }> {
-    await this.uploadCourseFile(courseId, file);
+    if (file.size === 0) return Promise.reject(new Error('Tệp không được để trống (0 byte).'));
     return wait({ syllabusId: `syl-${courseId}-${Date.now()}` }, 120);
   },
   createOutlineJob(courseId: string, _syllabusId: string, idempotencyKey: string): Promise<{ jobId: string; status: string }> {
@@ -1677,7 +2026,7 @@ export const mockApi = {
       return Promise.reject(new Error('409: Phiên bản khung môn học đã thay đổi, vui lòng tải lại.'));
     }
     if (!state.outline.chapters.length || !state.outline.learningOutcomes.length) {
-      return Promise.reject(new Error('422: Khung môn học phải có ít nhất 1 chương và 1 chuẩn đầu ra (LO).'));
+      return Promise.reject(new Error('422: Khung môn học phải có ít nhất 1 buổi học và 1 chuẩn đầu ra (LO).'));
     }
     state.outlineState = 'OUTLINE_APPROVED';
     state.outlineRevision += 1;
@@ -1688,9 +2037,9 @@ export const mockApi = {
   reopenChapter(courseId: string, chapterId: string, expectedRevision: number): Promise<{ draftId: string; state: 'DRAFT'; revision: number }> {
     const state = ensureAuthoringState(courseId);
     const ch = state.outline.chapters.find((c) => c.id === chapterId);
-    if (!ch) return Promise.reject(new Error('Không tìm thấy chương.'));
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học.'));
     if (ch.revision !== expectedRevision) {
-      return Promise.reject(new Error('409: Xung đột phiên bản chương.'));
+      return Promise.reject(new Error('409: Xung đột phiên bản buổi học.'));
     }
     ch.state = 'DRAFT';
     ch.revision += 1;
@@ -1700,12 +2049,12 @@ export const mockApi = {
   async uploadChapterDocument(courseId: string, chapterId: string, file: File): Promise<{ documentId: string; revision: number }> {
     const state = ensureAuthoringState(courseId);
     if (state.outlineState !== 'OUTLINE_APPROVED') {
-      return Promise.reject(new Error('409 OUTLINE_NOT_APPROVED: Cần duyệt Khung môn học (D1) trước khi gắn tài liệu chương.'));
+      return Promise.reject(new Error('409 OUTLINE_NOT_APPROVED: Cần duyệt Khung môn học (D1) trước khi gắn tài liệu buổi học.'));
     }
     const ch = state.outline.chapters.find((c) => c.id === chapterId);
-    if (!ch) return Promise.reject(new Error('Không tìm thấy chương.'));
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học.'));
     if (ch.state === 'PUBLISHED') {
-      return Promise.reject(new Error('409 REOPEN_REQUIRED: Chương đã xuất bản, cần Mở lại (Reopen) trước khi tải tài liệu mới.'));
+      return Promise.reject(new Error('409 REOPEN_REQUIRED: Buổi học đã xuất bản, cần Mở lại (Reopen) trước khi tải tài liệu mới.'));
     }
     const uploaded = await this.uploadCourseFile(courseId, file);
     ch.documentCount = (ch.documentCount ?? 0) + 1;
@@ -1719,9 +2068,9 @@ export const mockApi = {
       return Promise.reject(new Error('409 OUTLINE_NOT_APPROVED: Khung môn học chưa được duyệt.'));
     }
     const ch = state.outline.chapters.find((c) => c.id === chapterId);
-    if (!ch) return Promise.reject(new Error('Không tìm thấy chương.'));
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học.'));
     if (ch.revision !== expectedRevision) {
-      return Promise.reject(new Error('409: Revision của chương đã lệch, vui lòng làm mới.'));
+      return Promise.reject(new Error('409: Revision của buổi học đã lệch, vui lòng làm mới.'));
     }
     const jobId = `job-lesson-${courseId}-${chapterId}-${Date.now()}`;
     authoringJobs.set(jobId, {
@@ -1762,9 +2111,9 @@ export const mockApi = {
   ): Promise<{ lesson: ChapterLessonItem; revision: number }> {
     const state = ensureAuthoringState(courseId);
     const ch = state.outline.chapters.find((c) => c.id === chapterId);
-    if (!ch) return Promise.reject(new Error('Không tìm thấy chương.'));
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học.'));
     if (ch.revision !== input.expectedRevision) {
-      return Promise.reject(new Error('409: Revision chương đã thay đổi.'));
+      return Promise.reject(new Error('409: Revision buổi học đã thay đổi.'));
     }
     const list = state.lessonsByChapter[chapterId] ?? [];
     const target = list.find((l) => l.id === lessonId);
@@ -1792,9 +2141,9 @@ export const mockApi = {
   ): Promise<{ updatedCount: number; revision: number }> {
     const state = ensureAuthoringState(courseId);
     const ch = state.outline.chapters.find((c) => c.id === chapterId);
-    if (!ch) return Promise.reject(new Error('Không tìm thấy chương.'));
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học.'));
     if (ch.revision !== input.expectedRevision) {
-      return Promise.reject(new Error('409: Revision chương đã thay đổi.'));
+      return Promise.reject(new Error('409: Revision buổi học đã thay đổi.'));
     }
     const list = state.lessonsByChapter[chapterId] ?? [];
     let updatedCount = 0;
@@ -1813,13 +2162,13 @@ export const mockApi = {
   approveChapterLessons(courseId: string, chapterId: string, expectedRevision: number): Promise<{ state: 'LESSON_APPROVED'; revision: number }> {
     const state = ensureAuthoringState(courseId);
     const ch = state.outline.chapters.find((c) => c.id === chapterId);
-    if (!ch) return Promise.reject(new Error('Không tìm thấy chương.'));
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học.'));
     if (ch.revision !== expectedRevision) {
-      return Promise.reject(new Error('409: Revision chương đã thay đổi.'));
+      return Promise.reject(new Error('409: Revision buổi học đã thay đổi.'));
     }
     const list = state.lessonsByChapter[chapterId] ?? [];
     if (!list.length || list.some((l) => l.decision === 'PENDING')) {
-      return Promise.reject(new Error('422: Mọi bài học trong chương phải có quyết định (APPROVE / EDIT / REJECT) trước khi duyệt.'));
+      return Promise.reject(new Error('422: Mọi bài học trong buổi học phải có quyết định (APPROVE / EDIT / REJECT) trước khi duyệt.'));
     }
     ch.state = 'LESSON_APPROVED';
     ch.revision += 1;
@@ -1829,9 +2178,9 @@ export const mockApi = {
   discardChapterLessons(courseId: string, chapterId: string, expectedRevision: number): Promise<{ state: 'DRAFT'; revision: number }> {
     const state = ensureAuthoringState(courseId);
     const ch = state.outline.chapters.find((c) => c.id === chapterId);
-    if (!ch) return Promise.reject(new Error('Không tìm thấy chương.'));
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học.'));
     if (ch.revision !== expectedRevision) {
-      return Promise.reject(new Error('409: Revision chương đã thay đổi.'));
+      return Promise.reject(new Error('409: Revision buổi học đã thay đổi.'));
     }
     state.lessonsByChapter[chapterId] = [];
     ch.state = 'DRAFT';
@@ -1849,14 +2198,14 @@ export const mockApi = {
     const state = ensureAuthoringState(courseId);
     const uniqueIds = Array.from(new Set(chapterIds));
     if (uniqueIds.length < 2) {
-      return Promise.reject(new Error('422 MIN_TWO_CHAPTERS_REQUIRED: Cần chọn ít nhất 2 chương đã duyệt để sinh quan hệ liên chương.'));
+      return Promise.reject(new Error('422 MIN_TWO_CHAPTERS_REQUIRED: Cần chọn ít nhất 2 buổi học đã duyệt để sinh quan hệ giữa các buổi học.'));
     }
     const unapproved = uniqueIds.filter((cid) => {
       const ch = state.outline.chapters.find((c) => c.id === cid);
       return !ch || (ch.state !== 'LESSON_APPROVED' && ch.state !== 'PUBLISHED');
     });
     if (unapproved.length) {
-      return Promise.reject(new Error('409: Tất cả các chương được chọn phải ở trạng thái LESSON_APPROVED.'));
+      return Promise.reject(new Error('409: Tất cả các buổi học được chọn phải ở trạng thái LESSON_APPROVED.'));
     }
     if (state.relationRevision !== expectedRevision) {
       return Promise.reject(new Error('409: Revision quan hệ đã thay đổi.'));
@@ -1954,10 +2303,10 @@ export const mockApi = {
     }
     const approvedChapters = state.outline.chapters.filter((c) => c.state === 'LESSON_APPROVED' || c.state === 'PUBLISHED');
     if (state.outlineState !== 'OUTLINE_APPROVED' || approvedChapters.length === 0) {
-      return Promise.reject(new Error('422: Cần duyệt khung môn học và ít nhất 1 chương trước khi xuất bản Master Graph.'));
+      return Promise.reject(new Error('422: Cần duyệt khung môn học và ít nhất 1 buổi học trước khi xuất bản Master Graph.'));
     }
     if (state.relations.some((r) => r.decision === 'PENDING')) {
-      return Promise.reject(new Error('422: Còn quan hệ liên chương chưa được duyệt (PENDING).'));
+      return Promise.reject(new Error('422: Còn quan hệ giữa các buổi học chưa được duyệt (PENDING).'));
     }
 
     const course = teacherCoursesStore.find((c) => c.id === courseId);
@@ -2059,9 +2408,9 @@ export const mockApi = {
             { code: 'L.O.2', description: `Phân tích và vận dụng mô hình trong ${title}` },
           ],
           chapters: [
-            { id: 'ch1', title: 'Chương 1: Tổng quan & Kiến trúc cơ bản', loCodes: ['L.O.1'], state: 'DRAFT', revision: 1, documentCount: 0 },
-            { id: 'ch2', title: 'Chương 2: Nguyên lý & Thuật toán cốt lõi', loCodes: ['L.O.1', 'L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
-            { id: 'ch3', title: 'Chương 3: Ứng dụng & Đánh giá hệ thống', loCodes: ['L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
+            { id: 'ch1', title: 'Buổi học 1: Tổng quan & Kiến trúc cơ bản', loCodes: ['L.O.1'], state: 'DRAFT', revision: 1, documentCount: 0 },
+            { id: 'ch2', title: 'Buổi học 2: Nguyên lý & Thuật toán cốt lõi', loCodes: ['L.O.1', 'L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
+            { id: 'ch3', title: 'Buổi học 3: Ứng dụng & Đánh giá hệ thống', loCodes: ['L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
           ],
         };
         state.outlineState = 'OUTLINE_REVIEW';
@@ -2077,7 +2426,7 @@ export const mockApi = {
             content: `Định nghĩa cốt lõi, mô hình và ví dụ minh họa trích xuất từ tài liệu ${chTitle}.`,
             sourceRef: 'Slide tr. 3-8',
             loCodes: ch?.loCodes ?? ['L.O.1'],
-            aiComment: 'AI đã kiểm tra lại: khớp 96% với tài liệu chương và L.O.1.',
+            aiComment: 'AI đã kiểm tra lại: khớp 96% với tài liệu buổi học và L.O.1.',
             hasWarning: false,
             decision: 'PENDING',
           },
@@ -2124,13 +2473,13 @@ export const mockApi = {
               targetChapterId: chIds[i + 1],
               relationType: 'PREREQUISITE',
               sourceRef: `Liên kết ${chIds[i]} → ${chIds[i + 1]}`,
-              reason: 'Khái niệm chương trước là nền tảng trực tiếp để tiếp thu bài mở đầu chương sau.',
+              reason: 'Khái niệm buổi học trước là nền tảng trực tiếp để tiếp thu bài mở đầu buổi học sau.',
               requiredKnowledge: `Nắm vững ${srcLessons[srcLessons.length - 1].title}`,
               strength: 'hard',
               confidence: 0.91,
               evidence: [{ slideId: `${chIds[i]}_p12`, quote: `Khái niệm ${srcLessons[srcLessons.length - 1].title} được dùng trực tiếp ở phần đầu ${tgtLessons[0].title}.` }],
               assessment: { verdict: 'supported', issue: '' },
-              aiComment: 'AI đề xuất tiên quyết liên chương dựa trên khái niệm nền tảng.',
+              aiComment: 'AI đề xuất tiên quyết giữa các buổi học dựa trên khái niệm nền tảng.',
               hasWarning: false,
               decision: 'PENDING',
             });
@@ -2177,7 +2526,7 @@ export const mockApi = {
       },
       warnings: hasDocs
         ? ['2 trang có ít văn bản (chủ yếu là sơ đồ/hình ảnh), hệ thống chỉ trích xuất phần text layer.']
-        : ['Chưa có tài liệu chương nào được tải lên.'],
+        : ['Chưa có tài liệu buổi học nào được tải lên.'],
       revision: ch?.revision ?? 1,
     }, 60);
   },

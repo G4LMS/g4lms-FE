@@ -10,11 +10,14 @@ import {
   LoaderCircle,
   Lock,
   Network,
+  RotateCcw,
   Search,
   Sparkles,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KnowledgeGraphData, KnowledgeGraphNode } from '../../types';
 
 interface Props {
@@ -47,18 +50,19 @@ function styleOf(type: string) {
 
 function groupKeyOf(node: KnowledgeGraphNode): { key: string; label: string; sortOrder: number } {
   const props = (node.properties ?? {}) as Record<string, unknown>;
-  const week = props.default_week ?? props.defaultWeek;
-  if (typeof week === 'number' && Number.isFinite(week)) {
-    return { key: `week-${week}`, label: `Tuần ${week}`, sortOrder: week };
-  }
   const chapter = props.chapter_id ?? props.chapterId;
   if (typeof chapter === 'string' && chapter.trim()) {
     const match = chapter.match(/\d+/);
+    const num = match ? Number(match[0]) : 500;
     return {
       key: `ch-${chapter}`,
-      label: `Chương ${match ? match[0] : chapter}`,
-      sortOrder: match ? 100 + Number(match[0]) : 500,
+      label: `Buổi học ${match ? match[0] : chapter}`,
+      sortOrder: num,
     };
+  }
+  const week = props.default_week ?? props.defaultWeek;
+  if (typeof week === 'number' && Number.isFinite(week)) {
+    return { key: `ch-ch${week}`, label: `Buổi học ${week}`, sortOrder: week };
   }
   return { key: 'general', label: 'Tổng quan & Khái niệm chung', sortOrder: 999 };
 }
@@ -76,7 +80,7 @@ function chapterInfoOf(node: KnowledgeGraphNode): { key: string; label: string; 
     const match = raw.match(/\d+/);
     return {
       key: raw.trim(),
-      label: match ? `Chương ${match[0]}` : raw.trim(),
+      label: match ? `Buổi học ${match[0]}` : raw.trim(),
       sortOrder: match ? Number(match[0]) : 500,
     };
   }
@@ -93,7 +97,7 @@ function nodePos(index: number): { x: number; y: number } {
 
 export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocusInGraph }: Props) {
   const studyNodes = useMemo(
-    () => data.nodes.filter((n) => n.type !== 'Content' && n.type !== 'Course'),
+    () => data.nodes.filter((n) => n.type !== 'Content' && n.type !== 'Course' && n.type !== 'LO'),
     [data.nodes],
   );
 
@@ -129,6 +133,27 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'learning' | 'remedial' | 'unlearned' | 'locked'>('all');
   const [openBuckets, setOpenBuckets] = useState<Record<string, boolean>>({});
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const [graphBoxEl, setGraphBoxEl] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!graphBoxEl) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.ctrlKey || e.metaKey) {
+        const delta = e.deltaY < 0 ? 0.08 : -0.08;
+        setZoom((z) => Math.min(1.6, Math.max(0.45, Number((z + delta).toFixed(2)))));
+      } else {
+        setPan((p) => ({ x: p.x - e.deltaX * 0.6, y: p.y - e.deltaY * 0.6 }));
+      }
+    };
+    graphBoxEl.addEventListener('wheel', handleWheel, { passive: false });
+    return () => graphBoxEl.removeEventListener('wheel', handleWheel);
+  }, [graphBoxEl]);
 
   type LearningState = 'mastered' | 'learning' | 'remedial' | 'unlearned' | 'locked';
 
@@ -153,7 +178,7 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
       const ls = String(p.learning_state ?? p.learningState ?? '');
       const masteryVal = typeof p.mastery === 'number' ? p.mastery : null;
 
-      if (ls === 'mastered' || (masteryVal !== null && masteryVal >= 80)) {
+      if (ls === 'mastered' || (masteryVal !== null && masteryVal >= 70)) {
         map.set(node.id, { state: 'mastered' });
       } else if (ls === 'learning') {
         hasLearning = true;
@@ -180,10 +205,32 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
       }
     }
 
+    // Lock subsequent sessions/weeks when an earlier session is not yet fully mastered
+    let unfinishedSessionLabel: string | null = null;
+    for (const bucket of buckets) {
+      if (unfinishedSessionLabel) {
+        for (const n of bucket.nodes) {
+          if (map.get(n.id)?.state !== 'mastered') {
+            map.set(n.id, {
+              state: 'locked',
+              lockReason: `Cần hoàn thành: ${unfinishedSessionLabel}`,
+            });
+          }
+        }
+      } else {
+        const hasPending = bucket.nodes.some((n) => map.get(n.id)?.state !== 'mastered');
+        if (hasPending) {
+          unfinishedSessionLabel = bucket.label;
+        }
+      }
+    }
+
     // Ensure at least 1 active "Đang học" item if none exists
     if (!hasLearning) {
-      const firstOpen = studyNodes.find((n) => map.get(n.id)?.state === 'unlearned') ?? studyNodes[0];
-      if (firstOpen) map.set(firstOpen.id, { state: 'learning' });
+      const firstOpen = studyNodes.find((n) => map.get(n.id)?.state === 'unlearned') ?? studyNodes.find((n) => map.get(n.id)?.state !== 'locked') ?? studyNodes[0];
+      if (firstOpen && map.get(firstOpen.id)?.state !== 'locked') {
+        map.set(firstOpen.id, { state: 'learning' });
+      }
     }
     if (!hasRemedial) {
       const candidate = studyNodes.find((n) => {
@@ -195,7 +242,7 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
     }
 
     return map;
-  }, [studyNodes, data.edges, data.nodes]);
+  }, [studyNodes, buckets, data.edges, data.nodes]);
 
   const activeBucket = buckets.find((b) => b.key === selectedBucketKey) ?? buckets[0];
   const selectedNode = useMemo(
@@ -274,10 +321,10 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
 
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%', background: '#f8fafc' }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 22px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 22px' }}>
         {mode === 'path' ? (
           <div style={{ maxWidth: 680, margin: '0 auto' }}>
-            {/* Pastel Week / Chapter Stepper */}
+            {/* Pastel Week / Session Stepper */}
             <nav
               aria-label="Chọn chặng học"
               style={{
@@ -290,6 +337,7 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
             >
               {buckets.map((bucket) => {
                 const active = activeBucket?.key === bucket.key;
+                const bucketLocked = bucket.nodes.length > 0 && bucket.nodes.every((n) => learningStateMap.get(n.id)?.state === 'locked');
                 return (
                   <button
                     key={bucket.key}
@@ -297,6 +345,8 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
                     onClick={() => {
                       setSelectedBucketKey(bucket.key);
                       setSelectedNodeId(null);
+                      setPan({ x: 0, y: 0 });
+                      setZoom(1);
                     }}
                     style={{
                       display: 'flex',
@@ -305,23 +355,25 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
                       padding: '8px 14px',
                       borderRadius: 999,
                       border: `1.5px solid ${active ? '#7dd3fc' : '#e2e8f0'}`,
-                      background: active ? '#e0f2fe' : '#ffffff',
-                      color: active ? '#0369a1' : '#334155',
+                      background: active ? '#e0f2fe' : bucketLocked ? '#f1f5f9' : '#ffffff',
+                      color: active ? '#0369a1' : bucketLocked ? '#64748b' : '#334155',
                       whiteSpace: 'nowrap',
                       boxShadow: active ? '0 2px 8px rgba(14, 165, 233, 0.14)' : 'none',
                     }}
                   >
-                    <CalendarDays size={14} />
+                    {bucketLocked ? <Lock size={13} /> : <CalendarDays size={14} />}
                     <span style={{ textAlign: 'left' }}>
                       <b style={{ display: 'block', fontSize: 12 }}>{bucket.label}</b>
-                      <small style={{ fontSize: 10, opacity: 0.8 }}>{bucket.nodes.length} khái niệm</small>
+                      <small style={{ fontSize: 10, opacity: 0.8 }}>
+                        {bucketLocked ? 'Đang khóa' : `${bucket.nodes.length} khái niệm`}
+                      </small>
                     </span>
                   </button>
                 );
               })}
             </nav>
 
-            {/* Week Summary Card (giống G4LMS) */}
+            {/* Week Summary Card */}
             {activeBucket && (
               <div
                 style={{
@@ -358,135 +410,229 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
               </div>
             )}
 
-            {/* Winding S-Curve Roadmap */}
+            {/* Winding S-Curve Roadmap (Floating Pan & Zoom inside this box) */}
             {activeNodes.length === 0 ? (
               <div className="admin-card" style={{ padding: 24, textAlign: 'center' }}>
                 <p className="muted">Chưa có nội dung trong chặng học này.</p>
               </div>
             ) : (
               <div
+                ref={setGraphBoxEl}
+                onPointerDown={(e) => {
+                  const target = e.target as HTMLElement;
+                  if (target.closest('button, a, input, select, [data-no-pan="true"]')) return;
+                  setDragging(true);
+                  dragStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  if (!dragging || !dragStartRef.current) return;
+                  setPan({
+                    x: dragStartRef.current.panX + (e.clientX - dragStartRef.current.x),
+                    y: dragStartRef.current.panY + (e.clientY - dragStartRef.current.y),
+                  });
+                }}
+                onPointerUp={(e) => {
+                  if (!dragging) return;
+                  setDragging(false);
+                  dragStartRef.current = null;
+                  try {
+                    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+                  } catch { /* ignore */ }
+                }}
                 style={{
                   position: 'relative',
-                  width: 480,
+                  width: 560,
                   maxWidth: '100%',
-                  height: canvasHeight,
+                  height: 'min(580px, 68vh)',
                   margin: '0 auto',
-                  background: '#ffffff',
+                  backgroundColor: '#ffffff',
+                  backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)',
+                  backgroundSize: '20px 20px',
+                  backgroundPosition: `${pan.x}px ${pan.y}px`,
                   border: '1px solid #e2e8f0',
                   borderRadius: 16,
-                  boxShadow: '0 2px 12px rgba(15, 23, 42, 0.03)',
+                  boxShadow: '0 2px 12px rgba(15, 23, 42, 0.04)',
                   overflow: 'hidden',
+                  overscrollBehavior: 'contain',
+                  cursor: dragging ? 'grabbing' : 'grab',
+                  userSelect: dragging ? 'none' : 'auto',
                 }}
               >
-                <svg
-                  width={480}
-                  height={canvasHeight}
-                  viewBox={`0 0 480 ${canvasHeight}`}
-                  style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
-                  aria-hidden
+                <div
+                  style={{
+                    position: 'relative',
+                    width: 480,
+                    height: canvasHeight,
+                    margin: '0 auto',
+                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    transformOrigin: 'top center',
+                  }}
                 >
-                  {activeNodes.slice(0, -1).map((node, i) => {
-                    const p1 = nodePos(i);
-                    const p2 = nodePos(i + 1);
-                    const midY = (p1.y + p2.y) / 2;
-                    const d = `M ${p1.x} ${p1.y} C ${p1.x} ${midY}, ${p2.x} ${midY}, ${p2.x} ${p2.y}`;
-                    const midX = (p1.x + p2.x) / 2;
+                  <svg
+                    width={480}
+                    height={canvasHeight}
+                    viewBox={`0 0 480 ${canvasHeight}`}
+                    style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+                    aria-hidden
+                  >
+                    {activeNodes.slice(0, -1).map((node, i) => {
+                      const p1 = nodePos(i);
+                      const p2 = nodePos(i + 1);
+                      const midY = (p1.y + p2.y) / 2;
+                      const d = `M ${p1.x} ${p1.y} C ${p1.x} ${midY}, ${p2.x} ${midY}, ${p2.x} ${p2.y}`;
+                      const midX = (p1.x + p2.x) / 2;
+                      return (
+                        <g key={`curve-${node.id}`}>
+                          <path d={d} fill="none" stroke="#cbd5e1" strokeWidth={3} strokeLinecap="round" />
+                          <circle cx={midX} cy={midY} r={3.5} fill="#94a3b8" />
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {activeNodes.map((node, index) => {
+                    const pos = nodePos(index);
+                    const st = styleOf(node.type);
+                    const lInfo = learningStateMap.get(node.id);
+                    const lState = lInfo?.state ?? 'unlearned';
+                    const isDone = lState === 'mastered';
+                    const isCurrent = lState === 'learning' || (index === activeNodeIdx && lState !== 'locked' && !isDone);
+                    const isLocked = lState === 'locked';
+                    const isSelected = selectedNodeId === node.id;
+                    const labelOnLeft = pos.x > ROADMAP_CENTER_X + 20;
+
+                    const circleBg = isCurrent ? '#0284c7' : isDone ? '#d1fae5' : isLocked ? '#f1f5f9' : st.bg;
+                    const circleBorder = isCurrent ? '#38bdf8' : isDone ? '#34d399' : isLocked ? '#cbd5e1' : st.border;
+                    const circleColor = isCurrent ? '#ffffff' : isDone ? '#047857' : isLocked ? '#64748b' : st.text;
+
                     return (
-                      <g key={`curve-${node.id}`}>
-                        <path d={d} fill="none" stroke="#cbd5e1" strokeWidth={3} strokeLinecap="round" />
-                        <circle cx={midX} cy={midY} r={3.5} fill="#94a3b8" />
-                      </g>
-                    );
-                  })}
-                </svg>
-
-                {activeNodes.map((node, index) => {
-                  const pos = nodePos(index);
-                  const st = styleOf(node.type);
-                  const isCurrent = index === activeNodeIdx;
-                  const isDone = index < activeNodeIdx;
-                  const isSelected = selectedNodeId === node.id;
-                  const labelOnLeft = pos.x > ROADMAP_CENTER_X + 20;
-
-                  const circleBg = isCurrent ? '#0284c7' : isDone ? '#d1fae5' : st.bg;
-                  const circleBorder = isCurrent ? '#38bdf8' : isDone ? '#34d399' : st.border;
-                  const circleColor = isCurrent ? '#ffffff' : isDone ? '#047857' : st.text;
-
-                  return (
-                    <div
-                      key={node.id}
-                      style={{
-                        position: 'absolute',
-                        left: pos.x,
-                        top: pos.y,
-                        transform: 'translate(-50%, -50%)',
-                        display: 'flex',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedNodeId(node.id)}
-                        aria-label={node.name}
-                        style={{
-                          width: isCurrent ? 68 : 58,
-                          height: isCurrent ? 68 : 58,
-                          borderRadius: '50%',
-                          border: `3px solid ${isSelected ? '#0f172a' : circleBorder}`,
-                          background: circleBg,
-                          color: circleColor,
-                          display: 'grid',
-                          placeItems: 'center',
-                          boxShadow: isCurrent
-                            ? '0 0 0 7px rgba(56, 189, 248, 0.22), 0 6px 16px rgba(2, 132, 199, 0.25)'
-                            : '0 3px 10px rgba(15, 23, 42, 0.06)',
-                          transition: 'transform 0.15s ease',
-                        }}
-                      >
-                        {isDone ? (
-                          <Check size={22} strokeWidth={2.6} />
-                        ) : isCurrent ? (
-                          <LoaderCircle size={24} />
-                        ) : (
-                          <BookOpen size={20} />
-                        )}
-                      </button>
-
-                      {/* Label bên cạnh node */}
                       <div
-                        onClick={() => setSelectedNodeId(node.id)}
+                        key={node.id}
                         style={{
                           position: 'absolute',
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          ...(labelOnLeft ? { right: 'calc(100% + 12px)', textAlign: 'right' } : { left: 'calc(100% + 12px)', textAlign: 'left' }),
-                          width: 150,
-                          cursor: 'pointer',
+                          left: pos.x,
+                          top: pos.y,
+                          transform: 'translate(-50%, -50%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          opacity: isLocked ? 0.72 : 1,
                         }}
                       >
-                        <div style={{ fontWeight: 700, fontSize: 12, color: '#0f172a', lineHeight: 1.3 }}>
-                          {node.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedNodeId(node.id)}
+                          aria-label={node.name}
+                          style={{
+                            width: isCurrent ? 68 : 58,
+                            height: isCurrent ? 68 : 58,
+                            borderRadius: '50%',
+                            border: `3px solid ${isSelected ? '#0f172a' : circleBorder}`,
+                            background: circleBg,
+                            color: circleColor,
+                            display: 'grid',
+                            placeItems: 'center',
+                            boxShadow: isCurrent
+                              ? '0 0 0 7px rgba(56, 189, 248, 0.22), 0 6px 16px rgba(2, 132, 199, 0.25)'
+                              : '0 3px 10px rgba(15, 23, 42, 0.06)',
+                            transition: 'transform 0.15s ease',
+                          }}
+                        >
+                          {isDone ? (
+                            <Check size={22} strokeWidth={2.6} />
+                          ) : isCurrent ? (
+                            <LoaderCircle size={24} />
+                          ) : isLocked ? (
+                            <Lock size={20} />
+                          ) : (
+                            <BookOpen size={20} />
+                          )}
+                        </button>
+
+                        <div
+                          data-no-pan="true"
+                          onClick={() => setSelectedNodeId(node.id)}
+                          style={{
+                            position: 'absolute',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            ...(labelOnLeft ? { right: 'calc(100% + 12px)', textAlign: 'right' } : { left: 'calc(100% + 12px)', textAlign: 'left' }),
+                            width: 150,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, fontSize: 12, color: isLocked ? '#64748b' : '#0f172a', lineHeight: 1.3 }}>
+                            {node.name}
+                          </div>
+                          <div style={{ fontSize: 10, color: isCurrent ? '#0284c7' : isLocked ? '#b45309' : '#64748b', marginTop: 2 }}>
+                            {isCurrent ? 'Đang học' : isDone ? 'Đã vững' : isLocked ? (lInfo?.lockReason ?? 'Đang khóa') : st.label}
+                          </div>
+                          {isCurrent && !isLocked && (
+                            <button
+                              type="button"
+                              className="btn btn-primary sm"
+                              style={{ marginTop: 6, borderRadius: 999, padding: '4px 12px' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenLearn(node.id);
+                              }}
+                            >
+                              Tiếp tục <ArrowRight size={12} />
+                            </button>
+                          )}
                         </div>
-                        <div style={{ fontSize: 10, color: isCurrent ? '#0284c7' : '#64748b', marginTop: 2 }}>
-                          {isCurrent ? 'Đang học' : isDone ? 'Đã vững' : st.label}
-                        </div>
-                        {isCurrent && (
-                          <button
-                            type="button"
-                            className="btn btn-primary sm"
-                            style={{ marginTop: 6, borderRadius: 999, padding: '4px 12px' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenLearn(node.id);
-                            }}
-                          >
-                            Tiếp tục <ArrowRight size={12} />
-                          </button>
-                        )}
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+
+                {/* Floating Zoom / Reset Controls inside the graph box */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    bottom: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    padding: 4,
+                    borderRadius: 10,
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 4px 14px rgba(15, 23, 42, 0.08)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="kg-btn sm"
+                    title="Phóng to"
+                    onClick={() => setZoom((z) => Math.min(1.6, Number((z + 0.12).toFixed(2))))}
+                  >
+                    <ZoomIn size={14} />
+                  </button>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#475569', minWidth: 40, textAlign: 'center' }}>
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  <button
+                    type="button"
+                    className="kg-btn sm"
+                    title="Thu nhỏ"
+                    onClick={() => setZoom((z) => Math.max(0.45, Number((z - 0.12).toFixed(2))))}
+                  >
+                    <ZoomOut size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="kg-btn sm"
+                    title="Đặt lại vị trí"
+                    onClick={() => {
+                      setZoom(1);
+                      setPan({ x: 0, y: 0 });
+                    }}
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -612,8 +758,8 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
                               : `${bucket.label} · ${bucket.totalInBucket} khái niệm`}
                           </div>
                           <div className="muted-xs" style={{ marginTop: 2 }}>
-                            {hasLearning ? 'Tuần hiện tại' : 'Đã mở'}
-                            {bucket.chapterLabels.length > 1 ? ` · ${bucket.chapterLabels.length} chương` : ''}
+                            {hasLearning ? 'Buổi hiện tại' : 'Đã mở'}
+                            {bucket.chapterLabels.length > 1 ? ` · ${bucket.chapterLabels.length} buổi học` : ''}
                           </div>
                         </div>
                         <div style={{ textAlign: 'right', marginRight: 6 }}>
@@ -806,7 +952,7 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
       {selectedNode && (
         <aside
           className="kg-panel"
-          style={{ width: 320, background: '#ffffff', borderLeft: '1px solid #e2e8f0' }}
+          style={{ width: 320, background: '#ffffff', borderLeft: '1px solid #e2e8f0', overscrollBehavior: 'contain' }}
           aria-label="Chi tiết khái niệm"
         >
           <div className="kg-panel-head">
@@ -839,9 +985,22 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
             </div>
           )}
 
+          {learningStateMap.get(selectedNode.id)?.state === 'locked' && (
+            <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: '#fef3c7', border: '1px solid #fcd34d', fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Lock size={13} />
+              <span>{learningStateMap.get(selectedNode.id)?.lockReason ?? 'Cần hoàn thành buổi học trước.'}</span>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button type="button" className="btn btn-primary sm" style={{ flex: 1 }} onClick={() => onOpenLearn(selectedNode.id)}>
-              <BookOpen size={13} /> Vào học <ArrowRight size={13} />
+            <button
+              type="button"
+              className="btn btn-primary sm"
+              style={{ flex: 1 }}
+              disabled={learningStateMap.get(selectedNode.id)?.state === 'locked'}
+              onClick={() => onOpenLearn(selectedNode.id)}
+            >
+              <BookOpen size={13} /> {learningStateMap.get(selectedNode.id)?.state === 'locked' ? 'Đang khóa' : 'Vào học'} <ArrowRight size={13} />
             </button>
             <button type="button" className="btn btn-outline sm" onClick={() => onFocusInGraph(selectedNode.id)}>
               <Network size={13} /> Xem sơ đồ

@@ -110,7 +110,7 @@ export function StudentRelationMap({
       const ls = String(p.learning_state ?? p.learningState ?? '');
       const masteryVal = typeof p.mastery === 'number' ? p.mastery : null;
 
-      if (ls === 'mastered' || (masteryVal !== null && masteryVal >= 80)) {
+      if (ls === 'mastered' || (masteryVal !== null && masteryVal >= 70)) {
         map.set(node.id, 'mastered');
       } else if (ls === 'learning') {
         hasLearning = true;
@@ -135,14 +135,31 @@ export function StudentRelationMap({
       }
     }
 
+    // Lock subsequent sessions when an earlier session is not yet fully mastered
+    let hasUnfinishedPrevSession = false;
+    for (const ch of chapters) {
+      if (hasUnfinishedPrevSession) {
+        for (const nid of ch.nodeIds) {
+          if (map.get(nid) !== 'mastered') {
+            map.set(nid, 'locked');
+          }
+        }
+      } else {
+        const anyPending = ch.nodeIds.some((nid) => map.get(nid) !== 'mastered');
+        if (anyPending) hasUnfinishedPrevSession = true;
+      }
+    }
+
     if (!hasLearning) {
       const firstOpen =
-        studyNodes.find((n) => map.get(n.id) === 'unlearned') ?? studyNodes[0];
-      if (firstOpen) map.set(firstOpen.id, 'learning');
+        studyNodes.find((n) => map.get(n.id) === 'unlearned') ??
+        studyNodes.find((n) => map.get(n.id) !== 'locked') ??
+        studyNodes[0];
+      if (firstOpen && map.get(firstOpen.id) !== 'locked') map.set(firstOpen.id, 'learning');
     }
 
     return map;
-  }, [studyNodes, data.edges]);
+  }, [studyNodes, chapters, data.edges]);
 
   const defaultNodeId = useMemo(() => {
     const learning = studyNodes.find(
@@ -309,7 +326,7 @@ export function StudentRelationMap({
         }
       }
 
-      // Compute which study nodes have any cross-chapter edge (for ⇄ mark)
+      // Compute which study nodes have any cross-session edge (for ⇄ mark)
       const crossSet = new Set<string>();
       for (const e of data.edges) {
         if (
@@ -456,7 +473,7 @@ export function StudentRelationMap({
               onChange={(e) => handleClusterSelectChange(e.target.value)}
             >
               {mode === 'cluster' && (
-                <option value="__all__">Tất cả chương ({courseCode})</option>
+                <option value="__all__">Tất cả buổi học ({courseCode})</option>
               )}
               {chapters.map((ch) => (
                 <option key={ch.key} value={ch.key}>
@@ -674,10 +691,11 @@ export function StudentRelationMap({
                         <button
                           type="button"
                           className="relation-learn-btn"
-                          title="Vào học bài này"
+                          disabled={st === 'locked'}
+                          title={st === 'locked' ? 'Cần hoàn thành buổi học hoặc bài tiên quyết trước' : 'Vào học bài này'}
                           onClick={() => onStartLearning(activeNode.id)}
                         >
-                          Học <ArrowRight size={12} />
+                          {st === 'locked' ? 'Đang khóa' : 'Học'} <ArrowRight size={12} />
                         </button>
                         <small>{STATE_LABEL[st]}</small>
                       </div>
@@ -787,14 +805,14 @@ export function StudentRelationMap({
           )}
         </div>
       ) : (
-        /* Cả cụm: Giữ thao tác trôi nổi D3 của g4lms-FE, cấu trúc Mã môn -> Chương -> Mục nhỏ */
+        /* Cả cụm: Giữ thao tác trôi nổi D3 của g4lms-FE, cấu trúc Mã môn -> Buổi học -> Mục nhỏ */
         <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}>
           <KnowledgeGraphCanvas
             courseId={courseId}
             data={clusterGraph.graph}
             role="student"
             editMode={false}
-            rightOpen={rightOpen}
+            rightOpen={false}
             focusRequest={clusterFocusReq}
             initialExpandedIds={clusterInitialExpanded}
             onStartLearning={onStartLearning}

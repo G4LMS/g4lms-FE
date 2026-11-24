@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2, Clock3 } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAsync } from '../features/common/useAsync';
 import { AppHeader } from '../features/layout/AppHeader';
@@ -15,6 +15,8 @@ function formatTime(seconds: number) {
 
 export default function StudentQuizPage() {
   const { courseId = '', quizId = '' } = useParams();
+  const [searchParams] = useSearchParams();
+  const nodeId = searchParams.get('nodeId') ?? undefined;
   const { language } = useLanguage();
   const isVi = language === 'vi';
   const { data: quiz, loading, error: loadError } = useAsync(
@@ -42,7 +44,7 @@ export default function StudentQuizPage() {
     setBusy(true);
     setActionError('');
     try {
-      const submitted = await api.submitQuizAttempt(courseId, quizId, attempt.id, { answers });
+      const submitted = await api.submitQuizAttempt(courseId, quizId, attempt.id, { answers, nodeId });
       setResult(submitted);
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : 'Không thể nộp bài kiểm tra.');
@@ -59,11 +61,13 @@ export default function StudentQuizPage() {
     }
   }, [remaining, attempt, result, busy]);
 
+  const fromNode = Boolean(nodeId);
+
   const start = async () => {
     setBusy(true);
     setActionError('');
     try {
-      const started = await api.startQuizAttempt(courseId, quizId);
+      const started = await api.startQuizAttempt(courseId, quizId, fromNode);
       setAttempt(started);
       setRemaining(Math.max(0, Math.ceil((new Date(started.expiresAt).getTime() - Date.now()) / 1000)));
     } catch (reason) {
@@ -73,7 +77,15 @@ export default function StudentQuizPage() {
     }
   };
 
-  const canStart = !!quiz && quiz.status === 'published' && quiz.attemptsUsed < quiz.attemptsAllowed;
+  const canStart = !!quiz && quiz.status === 'published' && (fromNode || quiz.attemptsUsed < quiz.attemptsAllowed);
+
+  const retry = async () => {
+    setResult(null);
+    setAttempt(null);
+    setAnswers({});
+    autoSubmitted.current = false;
+    await start();
+  };
 
   return (
     <div className="page">
@@ -91,7 +103,10 @@ export default function StudentQuizPage() {
               <div className="quiz-meta">
                 <span><Clock3 size={14} />{quiz.timeLimitMinutes} {isVi ? 'phút' : 'minutes'}</span>
                 <span>{quiz.questions.length} {isVi ? 'câu hỏi' : 'questions'}</span>
-                <span>{isVi ? 'Số lần làm' : 'Attempts'}: {quiz.attemptsUsed}/{quiz.attemptsAllowed}</span>
+                <span>
+                  {isVi ? 'Số lần làm' : 'Attempts'}:{' '}
+                  {fromNode ? (isVi ? 'Không giới hạn' : 'Unlimited') : `${quiz.attemptsUsed}/${quiz.attemptsAllowed}`}
+                </span>
               </div>
             </header>
 
@@ -144,6 +159,33 @@ export default function StudentQuizPage() {
                 <h2>{isVi ? 'Đã nộp bài' : 'Quiz submitted'}</h2>
                 <strong>{result.score?.toLocaleString(isVi ? 'vi-VN' : 'en-US')} / {result.maxScore}</strong>
                 <p>{result.correctCount}/{result.totalQuestions} {isVi ? 'câu trả lời đúng' : 'correct answers'}</p>
+                {result.totalQuestions > 0 && (result.correctCount ?? 0) / result.totalQuestions >= 0.7 ? (
+                  <p style={{ color: '#15803d', fontWeight: 600 }}>
+                    {isVi ? 'Đạt yêu cầu (≥ 70%) — Bài học đã hoàn thành và mở khóa bài tiếp theo!' : 'Passed (≥ 70%) — Next lesson unlocked!'}
+                  </p>
+                ) : (
+                  <p style={{ color: '#b45309' }}>
+                    {isVi ? 'Chưa đạt 70% để mở khóa bài học tiếp theo. Bạn có thể ôn lại và làm lại bài.' : 'Score below 70%. Review and try again to unlock the next lesson.'}
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 10 }}>
+                  {nodeId && (
+                    <Link className="btn btn-outline sm" to={`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`}>
+                      {isVi ? 'Quay lại bài học' : 'Back to lesson'}
+                    </Link>
+                  )}
+                  {result.totalQuestions > 0 && (result.correctCount ?? 0) / result.totalQuestions >= 0.7 ? (
+                    <Link className="btn btn-primary sm" to={`/courses/${courseId}/graph`}>
+                      {isVi ? 'Xem lộ trình & bài tiếp theo' : 'View path & next lesson'}
+                    </Link>
+                  ) : (
+                    canStart && (
+                      <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => void retry()}>
+                        {isVi ? 'Làm lại quiz' : 'Retake quiz'}
+                      </button>
+                    )
+                  )}
+                </div>
               </section>
             )}
           </>
