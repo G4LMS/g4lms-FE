@@ -71,10 +71,10 @@ export function UnifiedCourseGraph({ role }: Props) {
   );
 
   useEffect(() => {
-    if (!isD5Completed && authoringMode === 'editor') {
+    if (!kgLoading && !isD5Completed && authoringMode === 'editor') {
       setAuthoringMode('wizard');
     }
-  }, [isD5Completed, authoringMode]);
+  }, [kgLoading, isD5Completed, authoringMode]);
 
   const refreshGraph = () => setReloadTick((tick) => tick + 1);
 
@@ -373,7 +373,6 @@ export function UnifiedCourseGraph({ role }: Props) {
                     onClick={() => {
                       if (!isD5Completed) return;
                       setAuthoringMode('editor');
-                      refreshGraph();
                     }}
                   >
                     {isD5Completed ? <Network size={12} style={{ marginRight: 4 }} /> : <Lock size={12} style={{ marginRight: 4 }} />}
@@ -392,6 +391,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                     courseId={courseId}
                     courseName={courseName}
                     hasPublishedGraph={isD5Completed}
+                    onPublished={refreshGraph}
                     onPublishedGraph={() => {
                       setView('structure');
                       refreshGraph();

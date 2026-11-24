@@ -49,6 +49,7 @@ interface Props {
   courseId: string;
   courseName: string;
   hasPublishedGraph?: boolean;
+  onPublished?: () => void;
   onPublishedGraph: () => void;
 }
 
@@ -103,7 +104,7 @@ const VERDICT_BADGE: Record<AssessmentVerdict, { text: string; color: string }> 
   unsupported: { text: 'AI: Thiếu bằng chứng', color: '#b91c1c' },
 };
 
-export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph = false, onPublishedGraph }: Props) {
+export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph = false, onPublished, onPublishedGraph }: Props) {
   const nav = useNavigate();
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(true);
@@ -696,6 +697,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
         // Keep publish success even if secondary graph JSON sync fails in offline mock
       }
       setMessage(`Xuất bản Course Graph v${res.masterVersion} thành công!`);
+      onPublished?.();
       await loadOutline();
     } catch (reason) {
       const msg = reason instanceof Error ? reason.message : 'Không thể xuất bản Course Graph.';
