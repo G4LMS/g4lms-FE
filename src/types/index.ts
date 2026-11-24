@@ -767,6 +767,13 @@ export interface OutlineLearningOutcome {
 export interface CourseOutlineData {
   chapters: OutlineChapter[];
   learningOutcomes: OutlineLearningOutcome[];
+  sessions?: Array<{
+    label: string;
+    title: string;
+    topics?: Array<{ chapter_id: string; title: string }>;
+    lo_ids?: string[];
+    references?: string[];
+  }>;
 }
 
 export interface OutlineDraftResponse {

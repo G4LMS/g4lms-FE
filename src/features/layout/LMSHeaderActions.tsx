@@ -187,7 +187,15 @@ export default function LMSHeaderActions() {
             <div className="header-message-list">
               {messagesError && <p className="form-error" role="alert">{messagesError.message}</p>}
               {messages.map((message, index) => (
-                <button type="button" className="header-message-item" key={message.id}>
+                <button
+                  type="button"
+                  className="header-message-item"
+                  key={message.id}
+                  onClick={() => {
+                    setOpenMenu(null);
+                    nav('/messages');
+                  }}
+                >
                   <div className={`header-message-avatar ${index % 2 ? 'green' : ''}`}>{message.initials}</div>
                   <div>
                     <div className="header-message-meta">

@@ -17,7 +17,7 @@ Tài liệu này đặc tả toàn bộ hợp đồng API mà Frontend (`src/api
   ```json
   { "message": "Mô tả lỗi", "detail": "Chi tiết (hoặc mảng { msg })", "code": "ERROR_CODE" }
   ```
-- **Idempotency & Optimistic Locking (Luồng D1–D5):**
+- **Idempotency & Optimistic Locking (Luồng D1–D4):**
   - Các endpoint tạo job/publish yêu cầu header `Idempotency-Key`.
   - Các endpoint cập nhật bản nháp/duyệt sử dụng `expectedRevision` (và `expectedMasterVersion` khi publish) để tránh ghi đè đồng thời.
 
@@ -150,6 +150,7 @@ Tài liệu này đặc tả toàn bộ hợp đồng API mà Frontend (`src/api
 | Method | Endpoint | Query / Body | Response |
 |---|---|---|---|
 | `GET` | `/courses/:courseId/knowledge-graph` | — | `KnowledgeGraphData` (`{ nodes, edges }`) |
+| `POST` | `/courses/:courseId/graph-drafts` | `{ effectiveTermNo, baseRevision, payload, title, note }` | `KnowledgeGraphData` (đồng bộ JSON đồ thị sau thêm/sửa/xóa/gộp nút & cạnh) |
 | `POST` | `/teacher/courses/:courseId/knowledge-graph/generate` | `{}` | `KnowledgeGraphData` hoặc `{ jobId, status }` (FE poll tối đa 60 lần, mỗi 1s) |
 | `GET` | `/teacher/courses/:courseId/knowledge-graph/jobs/:jobId` | — | `{ status: 'completed' \| 'failed' \| ..., errorMessage? }` |
 | `GET` | `/courses/:courseId/graph` | — | `TeacherGraphData` |
@@ -170,9 +171,9 @@ Tài liệu này đặc tả toàn bộ hợp đồng API mà Frontend (`src/api
 
 ---
 
-## 8. D1–D5 Course Graph Authoring Workflow & Async Jobs
+## 8. D1–D4 Course Graph Authoring Workflow & Async Jobs
 
-### D1 — Khung chương trình (Outline)
+### D1 — Khung môn học (Outline)
 | Method | Endpoint | Headers / Body | Response |
 |---|---|---|---|
 | `POST` | `/courses/:courseId/syllabus` | `FormData` (`file`) | `{ syllabusId: string }` |
@@ -181,7 +182,7 @@ Tài liệu này đặc tả toàn bộ hợp đồng API mà Frontend (`src/api
 | `PUT` | `/courses/:courseId/outline/draft` | `{ outline, expectedRevision }` | `OutlineDraftResponse` |
 | `POST` | `/courses/:courseId/outline/approval` | `{ expectedRevision }` | `{ state: 'OUTLINE_APPROVED', revision }` |
 
-### D2 — Bài học theo chương (Chapter Lessons)
+### D2 — Bài học theo buổi học (Chapter / Week Lessons)
 | Method | Endpoint | Headers / Query / Body | Response |
 |---|---|---|---|
 | `POST` | `/courses/:courseId/chapters/:chapterId/reopen` | `{ expectedRevision }` | `{ draftId, state: 'DRAFT', revision }` |
@@ -195,22 +196,24 @@ Tài liệu này đặc tả toàn bộ hợp đồng API mà Frontend (`src/api
 | `GET` | `/courses/:courseId/chapters/:chapterId/source-readiness` | — | `SourceReadinessResponse` |
 | `GET` | `/courses/:courseId/usage` | — | `CourseUsageSummary` |
 
-### D3 — Quan hệ liên chương (Cross-Chapter Relations)
+### D3 — Sinh quan hệ trên toàn bộ đồ thị (Relations & Graph Review)
 | Method | Endpoint | Headers / Query / Body | Response |
 |---|---|---|---|
-| `POST` | `/courses/:courseId/relation-jobs` | `Idempotency-Key`, `{ chapterIds, expectedRevision }` | `{ jobId, status }` |
-| `GET` | `/courses/:courseId/relations` | `?limit=20&cursor=...` | `{ items: CourseRelationItem[], nextCursor, revision }` |
-| `PATCH` | `/courses/:courseId/relations/:relationId` | `{ decision, changes?, reviewNote?, expectedRevision }` | `{ relation: CourseRelationItem, revision }` |
-| `POST` | `/courses/:courseId/relations/batch-review` | `{ items, expectedRevision }` | `{ updatedCount, revision }` |
+| `POST` | `/courses/:courseId/weeks/:weekId/relation-jobs` | `Idempotency-Key`, `{ expectedRevision }` | `{ jobId, status }` |
+| `GET` | `/courses/:courseId/weeks/:weekId/relations` | `?limit=20&cursor=...` | `{ items: CourseRelationItem[], nextCursor, revision }` |
+| `PATCH` | `/courses/:courseId/weeks/:weekId/relations/:relationId` | `{ decision, changes?, reviewNote?, expectedRevision }` | `{ relation: CourseRelationItem, revision }` |
+| `POST` | `/courses/:courseId/weeks/:weekId/relations/batch-review` | `{ items, expectedRevision }` | `{ updatedCount, revision }` |
 | `POST` | `/courses/:courseId/relations/discard` | `{ expectedRevision }` | `{ revision }` |
 
-### D4 — Xuất bản Master Graph (Publish)
+*(Sau khi `relation-jobs` hoàn tất, giao diện D3 hiển thị trực tiếp đồ thị toàn khóa và dùng thêm các endpoint `/teacher/courses/:courseId/graph/*` và `/courses/:courseId/graph-drafts` ở Mục 7 để thêm/sửa/xóa/gộp/duyệt nút & cạnh.)*
+
+### D4 — Xuất bản Course Graph (Publish)
 | Method | Endpoint | Headers / Body | Response |
 |---|---|---|---|
 | `POST` | `/courses/:courseId/publish` | `Idempotency-Key`, `{ expectedRevision, expectedMasterVersion }` | `PublishCourseResponse` |
 | `POST` | `/courses/:courseId/publish/recover` | `{ publicationId }` | `PublishCourseResponse` |
 
-### D5 — Theo dõi Async Jobs
+### Theo dõi Async Jobs
 | Method | Endpoint | Headers / Body | Response |
 |---|---|---|---|
 | `GET` | `/jobs/:jobId` | — | `WorkflowJobResponse` |
@@ -242,7 +245,7 @@ interface KnowledgeGraphData {
   edges: Array<{ source: string; target: string; type: KnowledgeEdgeType; properties?: Record<string, unknown> }>;
 }
 
-// D1–D5 Workflow
+// D1–D4 Workflow
 type OutlineState = 'DRAFT' | 'OUTLINE_REVIEW' | 'OUTLINE_APPROVED';
 type ChapterWorkflowState = 'DRAFT' | 'LESSON_REVIEW' | 'LESSON_APPROVED' | 'PUBLISHED';
 type ReviewDecision = 'PENDING' | 'APPROVE' | 'EDIT' | 'REJECT';

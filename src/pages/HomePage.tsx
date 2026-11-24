@@ -21,6 +21,7 @@ import { useAsync } from "../features/common/useAsync";
 export const HomePage: React.FC = () => {
   const { language, t } = useLanguage();
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [helpOpen, setHelpOpen] = useState(false);
   const { user } = useAuth();
   const isTeacher = user?.role === "teacher";
   const isVi = language === "vi";
@@ -338,13 +339,45 @@ export const HomePage: React.FC = () => {
           <ChevronUp size={18} />
         </button>
         <button
+          type="button"
           className="home-floating-button"
           title="Trợ giúp"
           aria-label="Trợ giúp"
+          onClick={() => setHelpOpen((prev) => !prev)}
         >
           <HelpCircle size={18} />
         </button>
       </div>
+      {helpOpen && (
+        <div
+          role="dialog"
+          aria-label="Trợ giúp"
+          style={{
+            position: 'fixed',
+            right: 20,
+            bottom: 92,
+            width: 300,
+            background: '#fff',
+            border: '1px solid var(--line)',
+            borderRadius: 12,
+            padding: 14,
+            boxShadow: '0 12px 30px rgba(15, 23, 42, 0.14)',
+            zIndex: 40,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <strong>Hỗ trợ nhanh G4LMS</strong>
+            <button type="button" className="btn btn-outline sm" onClick={() => setHelpOpen(false)}>Đóng</button>
+          </div>
+          <p className="muted-s" style={{ margin: '0 0 6px' }}>
+            Sử dụng thanh điều hướng phía trên để vào Bảng điều khiển, Khóa học, Tin nhắn hoặc Thông báo.
+          </p>
+          <p className="muted-s" style={{ margin: 0 }}>
+            Liên hệ hỗ trợ kỹ thuật: <b>support@g4lms.edu.vn</b>
+          </p>
+        </div>
+      )}
     </div>
   );
 };

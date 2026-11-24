@@ -486,7 +486,7 @@ async function ensureKnowledgeGraph(courseId: string, forceGenerate = false): Pr
           id: normId,
           name: course ? `${course.title} (${course.code})` : normId,
           type: 'Course',
-          description: `Master Graph v${Math.max(1, st.masterVersion)}`,
+          description: `Course Graph v${Math.max(1, st.masterVersion)}`,
           properties: { code: course?.code ?? normId },
         },
       ];
@@ -2126,6 +2126,8 @@ export const mockApi = {
     if (input.changes) {
       if (input.changes.title !== undefined) target.title = input.changes.title;
       if (input.changes.content !== undefined) target.content = input.changes.content;
+      if (input.changes.outcome !== undefined) target.outcome = input.changes.outcome;
+      if (input.changes.loCodes !== undefined) target.loCodes = input.changes.loCodes;
     }
     ch.revision += 1;
     persistAuthoring();
@@ -2252,6 +2254,7 @@ export const mockApi = {
     target.decision = input.decision;
     if (input.reviewNote !== undefined) target.reviewNote = input.reviewNote;
     if (input.changes?.relationType) target.relationType = input.changes.relationType;
+    if (input.changes?.strength !== undefined) target.strength = input.changes.strength;
     state.relationRevision += 1;
     persistAuthoring();
     return wait({ relation: { ...target }, revision: state.relationRevision }, 50);
@@ -2303,7 +2306,7 @@ export const mockApi = {
     }
     const approvedChapters = state.outline.chapters.filter((c) => c.state === 'LESSON_APPROVED' || c.state === 'PUBLISHED');
     if (state.outlineState !== 'OUTLINE_APPROVED' || approvedChapters.length === 0) {
-      return Promise.reject(new Error('422: Cần duyệt khung môn học và ít nhất 1 buổi học trước khi xuất bản Master Graph.'));
+      return Promise.reject(new Error('422: Cần duyệt khung môn học và ít nhất 1 buổi học trước khi xuất bản Course Graph.'));
     }
     if (state.relations.some((r) => r.decision === 'PENDING')) {
       return Promise.reject(new Error('422: Còn quan hệ giữa các buổi học chưa được duyệt (PENDING).'));
@@ -2315,7 +2318,7 @@ export const mockApi = {
         id: courseId,
         name: course ? `${course.title} (${course.code})` : courseId,
         type: 'Course',
-        description: `Master Graph v${state.masterVersion + 1}`,
+        description: `Course Graph v${state.masterVersion + 1}`,
         properties: { code: course?.code ?? courseId },
       },
     ];
@@ -2371,20 +2374,23 @@ export const mockApi = {
     state.masterVersion += 1;
     state.relationRevision += 1;
     persistAuthoring();
+    const publicationId = `pub-${courseId}-${state.masterVersion}`;
     return wait({
       state: 'PUBLISHED',
       revision: state.relationRevision,
       masterVersion: state.masterVersion,
       warnings: [],
+      publicationId,
     });
   },
-  recoverCoursePublish(courseId: string, _publicationId: string): Promise<PublishCourseResponse> {
+  recoverCoursePublish(courseId: string, publicationId: string): Promise<PublishCourseResponse> {
     const state = ensureAuthoringState(courseId);
     return wait({
       state: 'PUBLISHED',
       revision: state.relationRevision,
       masterVersion: state.masterVersion,
       warnings: [],
+      publicationId,
     });
   },
 
@@ -2408,9 +2414,14 @@ export const mockApi = {
             { code: 'L.O.2', description: `Phân tích và vận dụng mô hình trong ${title}` },
           ],
           chapters: [
-            { id: 'ch1', title: 'Buổi học 1: Tổng quan & Kiến trúc cơ bản', loCodes: ['L.O.1'], state: 'DRAFT', revision: 1, documentCount: 0 },
-            { id: 'ch2', title: 'Buổi học 2: Nguyên lý & Thuật toán cốt lõi', loCodes: ['L.O.1', 'L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
-            { id: 'ch3', title: 'Buổi học 3: Ứng dụng & Đánh giá hệ thống', loCodes: ['L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
+            { id: '1', title: 'Buổi học 1: Tổng quan & Kiến trúc cơ bản', description: '', loCodes: ['L.O.1'], state: 'DRAFT', revision: 1, documentCount: 0 },
+            { id: '2', title: 'Buổi học 2: Nguyên lý & Thuật toán cốt lõi', description: '', loCodes: ['L.O.1', 'L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
+            { id: '3', title: 'Buổi học 3: Ứng dụng & Đánh giá hệ thống', description: '', loCodes: ['L.O.2'], state: 'DRAFT', revision: 1, documentCount: 0 },
+          ],
+          sessions: [
+            { label: '1', title: 'Buổi học 1: Tổng quan & Kiến trúc cơ bản', topics: [{ chapter_id: '1', title: 'Buổi học 1: Tổng quan & Kiến trúc cơ bản' }], lo_ids: ['L.O.1'], references: [] },
+            { label: '2', title: 'Buổi học 2: Nguyên lý & Thuật toán cốt lõi', topics: [{ chapter_id: '2', title: 'Buổi học 2: Nguyên lý & Thuật toán cốt lõi' }], lo_ids: ['L.O.1', 'L.O.2'], references: [] },
+            { label: '3', title: 'Buổi học 3: Ứng dụng & Đánh giá hệ thống', topics: [{ chapter_id: '3', title: 'Buổi học 3: Ứng dụng & Đánh giá hệ thống' }], lo_ids: ['L.O.2'], references: [] },
           ],
         };
         state.outlineState = 'OUTLINE_REVIEW';
@@ -2419,36 +2430,70 @@ export const mockApi = {
       } else if (job.kind === 'lesson' && job.chapterId) {
         const ch = state.outline.chapters.find((c) => c.id === job.chapterId);
         const chTitle = ch?.title ?? job.chapterId;
+        const weekNum = Number(job.chapterId) || 1;
         state.lessonsByChapter[job.chapterId] = [
           {
             id: `${job.courseId}_${job.chapterId}_l1`,
             title: `Khái niệm nhập môn - ${chTitle}`,
             content: `Định nghĩa cốt lõi, mô hình và ví dụ minh họa trích xuất từ tài liệu ${chTitle}.`,
-            sourceRef: 'Slide tr. 3-8',
+            sourceRef: `${job.chapterId}_p3`,
             loCodes: ch?.loCodes ?? ['L.O.1'],
+            aliases: ['Khái niệm cơ bản'],
+            outcome: `Trình bày được định nghĩa và vai trò của ${chTitle}.`,
+            level: 'topic',
+            durationMin: 10,
+            defaultWeek: weekNum,
+            confidence: 0.96,
+            details: [{ name: 'Định nghĩa & mô hình', evidence: [{ slideId: `${job.chapterId}_p4`, quote: `Khái niệm nền tảng của ${chTitle}.` }] }],
+            evidence: [{ slideId: `${job.chapterId}_p3`, quote: `Giới thiệu tổng quan và các thành phần chính trong ${chTitle}.` }],
+            reuseId: null,
+            assessment: { verdict: 'supported', issue: '' },
             aiComment: 'AI đã kiểm tra lại: khớp 96% với tài liệu buổi học và L.O.1.',
             hasWarning: false,
             decision: 'PENDING',
+            reviewNote: '',
           },
           {
             id: `${job.courseId}_${job.chapterId}_l2`,
             title: `Cơ chế hoạt động & Phân tích - ${chTitle}`,
             content: `Phân tích cơ chế vận hành, độ phức tạp và các trường hợp biên trong ${chTitle}.`,
-            sourceRef: 'Slide tr. 9-16',
+            sourceRef: `${job.chapterId}_p9`,
             loCodes: ch?.loCodes ?? ['L.O.1'],
+            aliases: ['Phân tích cơ chế'],
+            outcome: `Phân tích được cơ chế hoạt động và đánh giá độ phức tạp trong ${chTitle}.`,
+            level: 'lesson',
+            durationMin: 15,
+            defaultWeek: weekNum,
+            confidence: 0.78,
+            details: [{ name: 'Trường hợp biên & độ phức tạp', evidence: [{ slideId: `${job.chapterId}_p12`, quote: `Đánh giá chi phí thực thi trong ${chTitle}.` }] }],
+            evidence: [{ slideId: `${job.chapterId}_p9`, quote: `Quy trình xử lý từng bước và ví dụ minh họa.` }],
+            reuseId: null,
+            assessment: { verdict: 'revise', issue: 'Phần ví dụ thực nghiệm cần giảng viên rà soát thêm.' },
             aiComment: 'AI nghi ngờ: Phần ví dụ thực nghiệm cần giảng viên rà soát thêm.',
             hasWarning: true,
             decision: 'PENDING',
+            reviewNote: '',
           },
           {
             id: `${job.courseId}_${job.chapterId}_l3`,
             title: `Bài tập vận dụng - ${chTitle}`,
             content: `Tổng hợp câu hỏi ôn tập và tình huống áp dụng cho ${chTitle}.`,
-            sourceRef: 'Slide tr. 17-22',
+            sourceRef: `${job.chapterId}_p17`,
             loCodes: ch?.loCodes ?? ['L.O.2'],
+            aliases: ['Thực hành vận dụng'],
+            outcome: `Vận dụng được kiến thức ${chTitle} để giải quyết bài tập mẫu.`,
+            level: 'lesson',
+            durationMin: 12,
+            defaultWeek: weekNum,
+            confidence: 0.92,
+            details: [{ name: 'Bài tập tình huống', evidence: [{ slideId: `${job.chapterId}_p18`, quote: `Bài tập áp dụng thực tế cho ${chTitle}.` }] }],
+            evidence: [{ slideId: `${job.chapterId}_p17`, quote: `Tổng kết các dạng bài tập trọng tâm.` }],
+            reuseId: null,
+            assessment: { verdict: 'supported', issue: '' },
             aiComment: 'AI đã đối chiếu chuẩn đầu ra: đạt yêu cầu.',
             hasWarning: false,
             decision: 'PENDING',
+            reviewNote: '',
           },
         ];
         if (ch) {
@@ -2482,6 +2527,7 @@ export const mockApi = {
               aiComment: 'AI đề xuất tiên quyết giữa các buổi học dựa trên khái niệm nền tảng.',
               hasWarning: false,
               decision: 'PENDING',
+              reviewNote: '',
             });
           }
         }
@@ -2495,10 +2541,14 @@ export const mockApi = {
       jobId,
       status: job.status,
       progress: job.progress,
-      result: job.status === 'SUCCEEDED' ? { revision: job.revision } : undefined,
+      result: job.status === 'SUCCEEDED'
+        ? { revision: job.revision, weekId: job.chapterId ?? job.chapterIds?.[0] }
+        : undefined,
+      error: undefined,
       canResume: job.canResume,
       resumeCount: job.resumeCount,
       maxResumeAttempts: job.maxResumeAttempts,
+      resumeBlockedReason: job.resumeCount >= job.maxResumeAttempts ? 'RESUME_LIMIT_REACHED' : undefined,
     }, 150);
   },
   resumeWorkflowJob(jobId: string, _idempotencyKey: string): Promise<{ jobId: string; status: 'QUEUED' }> {

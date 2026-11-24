@@ -8,8 +8,8 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { CourseIndexSidebar } from '../courses/CourseIndexSidebar';
 import { AppHeader } from '../layout/AppHeader';
 import { CourseAuthoringWizard } from '../teacher/CourseAuthoringWizard';
-import { LoView } from '../teacher/LoView';
 import { GraphHealthPanel } from './GraphHealthPanel';
+import { serializeKnowledgeGraph } from './graphSerializer';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas';
 import { StudentJourneyViews } from './StudentJourneyViews';
 import { StudentRelationMap } from './StudentRelationMap';
@@ -29,7 +29,7 @@ export function UnifiedCourseGraph({ role }: Props) {
   const [rightOpen, setRightOpen] = useState(true);
   const [healthOpen, setHealthOpen] = useState(false);
   const [authoringMode, setAuthoringMode] = useState<'wizard' | 'editor'>('wizard');
-  const [view, setView] = useState<'path' | 'structure' | 'list' | 'outcomes' | 'authoring'>(
+  const [view, setView] = useState<'path' | 'structure' | 'list' | 'authoring'>(
     canEdit ? 'structure' : 'path',
   );
   const [actionError, setActionError] = useState('');
@@ -78,6 +78,18 @@ export function UnifiedCourseGraph({ role }: Props) {
 
   const refreshGraph = () => setReloadTick((tick) => tick + 1);
 
+  const syncGraphJsonToBe = async (note: string) => {
+    try {
+      const latestKg = await api.getKnowledgeGraph(courseId);
+      await api.saveKnowledgeGraph(courseId, serializeKnowledgeGraph(latestKg), {
+        title: 'Knowledge Graph Draft',
+        note,
+      });
+    } catch {
+      // Non-blocking sync; primary node/edge mutation already persisted
+    }
+  };
+
   const handleAddNode = async (input: {
     name: string;
     nodeType: KnowledgeNodeType;
@@ -96,6 +108,7 @@ export function UnifiedCourseGraph({ role }: Props) {
         description: input.description,
         properties: input.properties,
       });
+      await syncGraphJsonToBe(`Add node ${input.name}`);
       setActionMessage(`Đã thêm nút "${input.name}" (${input.nodeType}) vào đồ thị.`);
       refreshGraph();
     } catch (reason) {
@@ -109,6 +122,7 @@ export function UnifiedCourseGraph({ role }: Props) {
     setActionMessage('');
     try {
       await api.createGraphEdge(courseId, input);
+      await syncGraphJsonToBe(`Add edge ${input.fromId} -> ${input.toId} (${input.kind})`);
       setActionMessage(`Đã nối quan hệ ${input.fromId} → ${input.toId} (${input.kind}).`);
       refreshGraph();
     } catch (reason) {
@@ -153,6 +167,39 @@ export function UnifiedCourseGraph({ role }: Props) {
       refreshGraph();
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : 'Không thể xóa quan hệ.');
+    }
+  };
+
+  const handleUpdateEdge = async (input: {
+    oldFromId: string;
+    oldToId: string;
+    oldEdgeType: string;
+    fromId: string;
+    toId: string;
+    kind: KnowledgeEdgeType;
+    properties?: Record<string, unknown>;
+  }) => {
+    if (!canEdit) return;
+    setActionError('');
+    setActionMessage('');
+    try {
+      await api.deleteGraphEdge(courseId, {
+        fromId: input.oldFromId,
+        toId: input.oldToId,
+        edgeType: input.oldEdgeType,
+      });
+      await api.createGraphEdge(courseId, {
+        fromId: input.fromId,
+        toId: input.toId,
+        kind: input.kind,
+        properties: input.properties,
+      });
+      await syncGraphJsonToBe(`Update edge ${input.fromId} -> ${input.toId} (${input.kind})`);
+      setActionMessage(`Đã cập nhật quan hệ ${input.fromId} → ${input.toId} (${input.kind}).`);
+      refreshGraph();
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : 'Không thể sửa quan hệ.');
+      throw reason;
     }
   };
 
@@ -258,15 +305,10 @@ export function UnifiedCourseGraph({ role }: Props) {
               </button>
             )}
             {canEdit && (
-              <>
-                <button type="button" className={view === 'authoring' ? 'on' : ''} onClick={() => setView('authoring')}>
-                  <Layers size={12} style={{ marginRight: 4 }} />
-                  {isVi ? 'Dựng đồ thị (D1–D4)' : 'Authoring (D1–D4)'}
-                </button>
-                <button type="button" className={view === 'outcomes' ? 'on' : ''} onClick={() => setView('outcomes')}>
-                  {isVi ? 'Chuẩn đầu ra' : 'Learning outcomes'}
-                </button>
-              </>
+              <button type="button" className={view === 'authoring' ? 'on' : ''} onClick={() => setView('authoring')}>
+                <Layers size={12} style={{ marginRight: 4 }} />
+                {isVi ? 'Dựng đồ thị (D1–D4)' : 'Authoring (D1–D4)'}
+              </button>
             )}
           </div>
           {showAuthoringEditor && (
@@ -324,7 +366,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                     disabled={!isD5Completed}
                     title={
                       !isD5Completed
-                        ? (isVi ? 'Trang hiệu chỉnh bị khóa cho đến khi hoàn thành D5 (Xuất bản Master Graph).' : 'Locked until D5 is completed.')
+                        ? (isVi ? 'Trang hiệu chỉnh bị khóa cho đến khi hoàn thành D4 (Xuất bản Course Graph).' : 'Locked until D4 is completed.')
                         : undefined
                     }
                     style={!isD5Completed ? { opacity: 0.55, cursor: 'not-allowed' } : undefined}
@@ -335,12 +377,12 @@ export function UnifiedCourseGraph({ role }: Props) {
                     }}
                   >
                     {isD5Completed ? <Network size={12} style={{ marginRight: 4 }} /> : <Lock size={12} style={{ marginRight: 4 }} />}
-                    {isVi ? (isD5Completed ? 'Hiệu chỉnh' : 'Hiệu chỉnh (Khóa · Chưa xong D5)') : (isD5Completed ? 'Edit' : 'Edit (Locked)')}
+                    {isVi ? (isD5Completed ? 'Hiệu chỉnh' : 'Hiệu chỉnh (Khóa · Chưa xong D4)') : (isD5Completed ? 'Edit' : 'Edit (Locked)')}
                   </button>
                 </div>
                 <small className="muted-s">
                   {authoringMode === 'wizard'
-                    ? (isVi ? 'Tạo khung môn học, bài học theo buổi học, quan hệ giữa các buổi học và xuất bản (D5).' : 'Author outline, session lessons, cross-session relations, and publish.')
+                    ? (isVi ? 'Tạo khung môn học, bài học theo buổi học, sinh quan hệ trên toàn bộ đồ thị và xuất bản (D4).' : 'Author outline, session lessons, graph relations, and publish.')
                     : (isVi ? 'Thêm/sửa/xóa node & cạnh và kiểm tra tính hoàn thiện đồ thị.' : 'Add/edit/delete nodes & edges and check graph completeness.')}
                 </small>
               </div>
@@ -361,9 +403,9 @@ export function UnifiedCourseGraph({ role }: Props) {
                   <div className="empty-card">
                     <Lock size={28} style={{ marginBottom: 8, color: 'var(--muted)' }} />
                     <h2>Trang hiệu chỉnh đang bị khóa</h2>
-                    <p>Trang hiệu chỉnh chỉ mở sau khi hoàn thành Bước D5 (Xuất bản Master Graph).</p>
+                    <p>Trang hiệu chỉnh chỉ mở sau khi hoàn thành Bước D4 (Xuất bản Course Graph).</p>
                     <button type="button" className="btn btn-primary" onClick={() => setAuthoringMode('wizard')}>
-                      Quay lại quy trình D1–D5
+                      Quay lại quy trình D1–D4
                     </button>
                   </div>
                 </div>
@@ -386,6 +428,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                     onMergeNodes={handleMergeNodes}
                     onDeleteNode={handleDeleteNode}
                     onDeleteEdge={handleDeleteEdge}
+                    onUpdateEdge={handleUpdateEdge}
                     onApproveNode={handleApproveNode}
                     onApproveEdge={handleApproveEdge}
                     onOpenNodeEditor={(id) => nav(`/teacher/courses/${courseId}/nodes/${id}`)}
@@ -408,10 +451,6 @@ export function UnifiedCourseGraph({ role }: Props) {
                   </div>
                 </div>
               )}
-            </div>
-          ) : view === 'outcomes' && canEdit ? (
-            <div className="graph-stage">
-              <LoView courseId={courseId} />
             </div>
           ) : kgLoading && !knowledgeGraph ? (
             <div className="graph-stage" style={{ display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>
@@ -462,7 +501,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                 <h2>Môn học chưa có đồ thị tri thức</h2>
                 <p>
                   {canEdit
-                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo buổi học → D3: Quan hệ giữa các buổi học → D4: Xuất bản Master Graph) để kiểm soát từng buổi học ~20 node.'
+                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo buổi học → D3: Sinh quan hệ trên toàn bộ đồ thị → D4: Xuất bản Course Graph) để kiểm soát từng buổi học ~20 node.'
                     : 'Giảng viên chưa công bố đồ thị tri thức cho môn học này.'}
                 </p>
                 {canEdit && (

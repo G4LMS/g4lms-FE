@@ -71,6 +71,15 @@ export interface KnowledgeGraphCanvasProps {
   onMergeNodes?: (input: { keepId: string; mergeId: string }) => Promise<void>;
   onDeleteNode?: (nodeId: string) => Promise<void>;
   onDeleteEdge?: (input: { fromId: string; toId: string; edgeType: string }) => Promise<void>;
+  onUpdateEdge?: (input: {
+    oldFromId: string;
+    oldToId: string;
+    oldEdgeType: string;
+    fromId: string;
+    toId: string;
+    kind: KnowledgeEdgeType;
+    properties?: Record<string, unknown>;
+  }) => Promise<void>;
   onApproveNode?: (nodeId: string) => Promise<void>;
   onApproveEdge?: (input: { fromId: string; toId: string; edgeType: string }) => Promise<void>;
   onOpenNodeEditor?: (nodeId: string) => void;
@@ -180,6 +189,7 @@ export function KnowledgeGraphCanvas({
   onMergeNodes,
   onDeleteNode,
   onDeleteEdge,
+  onUpdateEdge,
   onApproveNode,
   onApproveEdge,
   onOpenNodeEditor,
@@ -230,6 +240,7 @@ export function KnowledgeGraphCanvas({
   selectedNodeIdRef.current = selectedNodeId;
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [selectedSessionWeek, setSelectedSessionWeek] = useState<string>('all');
   const [searchFocused, setSearchFocused] = useState(false);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; title: string; subtitle: string } | null>(null);
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
@@ -261,24 +272,51 @@ export function KnowledgeGraphCanvas({
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setQuery('');
+    setSelectedSessionWeek('all');
     posMapRef.current.clear();
     autoFitRef.current = true;
     hasMountedGraphRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId, initialExpandedKey]);
 
-  const visible = useMemo(
-    () =>
-      computeVisibleGraph(model, {
-        showAll,
-        expanded,
-        pageLimits,
-        hiddenNodeTypes,
-        hiddenEdgeTypes,
-        hideRedundant,
-      }),
-    [model, showAll, expanded, pageLimits, hiddenNodeTypes, hiddenEdgeTypes, hideRedundant],
-  );
+  const getNodeSuggestedWeek = useCallback((props: Record<string, unknown>): string | null => {
+    const raw = props.default_week ?? props.defaultWeek ?? props.week;
+    if (raw == null || String(raw).trim() === '') return null;
+    return String(raw).trim();
+  }, []);
+
+  const sessionWeekOptions = useMemo(() => {
+    const weeks = new Set<string>();
+    for (const n of model.nodes) {
+      if (n.isVirtualMore) continue;
+      const w = getNodeSuggestedWeek(n.props);
+      if (w !== null) weeks.add(w);
+    }
+    return Array.from(weeks).sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+  }, [model.nodes, getNodeSuggestedWeek]);
+
+  const visible = useMemo(() => {
+    const filteringByWeek = isTeacher && selectedSessionWeek !== 'all';
+    const base = computeVisibleGraph(model, {
+      showAll: showAll || filteringByWeek,
+      expanded,
+      pageLimits,
+      hiddenNodeTypes,
+      hiddenEdgeTypes,
+      hideRedundant,
+    });
+    if (!filteringByWeek) return base;
+    const filteredNodes = base.nodes.filter(
+      (n) => !n.isVirtualMore && getNodeSuggestedWeek(n.props) === selectedSessionWeek,
+    );
+    const keptIds = new Set(filteredNodes.map((n) => n.id));
+    const filteredEdges = base.edges.filter((e) => keptIds.has(e.sourceId) && keptIds.has(e.targetId));
+    return {
+      ...base,
+      nodes: filteredNodes,
+      edges: filteredEdges,
+    };
+  }, [model, showAll, expanded, pageLimits, hiddenNodeTypes, hiddenEdgeTypes, hideRedundant, isTeacher, selectedSessionWeek, getNodeSuggestedWeek]);
 
   // Search across ALL nodes in the full AI graph (including currently hidden ones)
   const searchMatches = useMemo(() => {
@@ -1099,6 +1137,7 @@ export function KnowledgeGraphCanvas({
   const [newNodeSpecText, setNewNodeSpecText] = useState('');
   const [newNodePage, setNewNodePage] = useState('1');
   const [attachParent, setAttachParent] = useState(true);
+  const [addNodeError, setAddNodeError] = useState('');
   const [savingNewNode, setSavingNewNode] = useState(false);
 
   const [edgeModalOpen, setEdgeModalOpen] = useState(false);
@@ -1112,6 +1151,7 @@ export function KnowledgeGraphCanvas({
   const [edgeFromSearch, setEdgeFromSearch] = useState('');
   const [edgeToSearch, setEdgeToSearch] = useState('');
   const [edgeError, setEdgeError] = useState('');
+  const [editingEdgeTarget, setEditingEdgeTarget] = useState<{ fromId: string; toId: string; edgeType: string } | null>(null);
   const [savingEdge, setSavingEdge] = useState(false);
 
   const triggerAddNode = () => {
@@ -1135,12 +1175,71 @@ export function KnowledgeGraphCanvas({
     setNewNodeSpecText('');
     setNewNodePage('1');
     setAttachParent(Boolean(selectedNodeId));
+    setAddNodeError('');
     setAddModalOpen(true);
   };
 
+  const isPositiveNum = (raw: string) => {
+    const n = Number(raw);
+    return raw.trim() !== '' && Number.isFinite(n) && n > 0;
+  };
+
+  const isAddNodeFormComplete = (() => {
+    const hasCommon =
+      Boolean(newNodeName.trim()) &&
+      Boolean(newNodeDesc.trim()) &&
+      Boolean(newNodeQuote.trim()) &&
+      Boolean(newNodeSource.trim()) &&
+      Boolean(newNodeOutcome.trim());
+    if (!hasCommon) return false;
+    if (newNodeType === 'Content') {
+      return Boolean(newNodeChapter.trim()) && isPositiveNum(newNodePage);
+    }
+    if (newNodeType === 'LO') {
+      return (
+        Boolean(newNodeCode.trim()) &&
+        isPositiveNum(newNodeWeek) &&
+        isPositiveNum(newNodeDuration) &&
+        isPositiveNum(newNodeSourcePage)
+      );
+    }
+    if (newNodeType === 'Assignment') {
+      return (
+        Boolean(newNodeAssignKind.trim()) &&
+        isPositiveNum(newNodeWeek) &&
+        isPositiveNum(newNodeDuration) &&
+        isPositiveNum(newNodeSourcePage) &&
+        Boolean(newNodeLos.trim()) &&
+        Boolean(newNodeSpecText.trim())
+      );
+    }
+    return (
+      Boolean(newNodeChapter.trim()) &&
+      isPositiveNum(newNodeWeek) &&
+      isPositiveNum(newNodeDuration) &&
+      Boolean(newNodeChapterTopic.trim()) &&
+      Boolean(newNodeAliases.trim()) &&
+      Boolean(newNodeSlideIds.trim())
+    );
+  })();
+
+  const isAddEdgeFormComplete =
+    Boolean(edgeFromId) &&
+    Boolean(edgeToId) &&
+    edgeFromId !== edgeToId &&
+    Boolean(edgeReason.trim()) &&
+    Boolean(edgeSlideId.trim()) &&
+    Boolean(edgeQuote.trim()) &&
+    (edgeKind !== 'PREREQUISITE' || Boolean(edgeStrength));
+
   const submitAddNode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!onAddNode || !newNodeName.trim() || savingNewNode) return;
+    if (!onAddNode || savingNewNode) return;
+    if (!isAddNodeFormComplete) {
+      setAddNodeError('Vui lòng điền đầy đủ tất cả các trường thông tin trước khi tạo nút.');
+      return;
+    }
+    setAddNodeError('');
     setSavingNewNode(true);
     try {
       const parsedWeek = Number(newNodeWeek);
@@ -1231,18 +1330,42 @@ export function KnowledgeGraphCanvas({
     setEdgeFromSearch('');
     setEdgeToSearch('');
     setEdgeError('');
+    setEditingEdgeTarget(null);
+    setEdgeModalOpen(true);
+  };
+
+  const triggerEditEdge = (edge: NonNullable<typeof selectedEdge>) => {
+    if (!showEditControls || !onUpdateEdge) return;
+    const ev = Array.isArray(edge.props.evidence) && edge.props.evidence.length > 0
+      ? (edge.props.evidence[0] as { slide_id?: string; slideId?: string; quote?: string })
+      : null;
+    setEdgeFromId(edge.sourceId);
+    setEdgeToId(edge.targetId);
+    setEdgeKind(edge.type);
+    setEdgeStrength(edge.props.strength === 'soft' ? 'soft' : 'hard');
+    setEdgeReason(String(edge.props.reason ?? ''));
+    setEdgeSlideId(String(ev?.slide_id ?? ev?.slideId ?? ''));
+    setEdgeQuote(String(ev?.quote ?? edge.props.quote ?? ''));
+    setEdgeFromSearch('');
+    setEdgeToSearch('');
+    setEdgeError('');
+    setEditingEdgeTarget({ fromId: edge.sourceId, toId: edge.targetId, edgeType: edge.type });
     setEdgeModalOpen(true);
   };
 
   const submitAddEdge = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!onAddEdge || savingEdge) return;
+    if ((!onAddEdge && !onUpdateEdge) || savingEdge) return;
     if (!edgeFromId || !edgeToId) {
       setEdgeError('Vui lòng chọn cả nút nguồn và nút đích.');
       return;
     }
     if (edgeFromId === edgeToId) {
       setEdgeError('Nút nguồn và nút đích phải khác nhau.');
+      return;
+    }
+    if (!isAddEdgeFormComplete) {
+      setEdgeError('Vui lòng điền đầy đủ tất cả các trường thông tin trước khi xác nhận nối cạnh.');
       return;
     }
     setSavingEdge(true);
@@ -1281,7 +1404,21 @@ export function KnowledgeGraphCanvas({
                     }
                   : {}),
               };
-      await onAddEdge({ fromId: edgeFromId, toId: edgeToId, kind: edgeKind, properties });
+      if (editingEdgeTarget && onUpdateEdge) {
+        await onUpdateEdge({
+          oldFromId: editingEdgeTarget.fromId,
+          oldToId: editingEdgeTarget.toId,
+          oldEdgeType: editingEdgeTarget.edgeType,
+          fromId: edgeFromId,
+          toId: edgeToId,
+          kind: edgeKind,
+          properties,
+        });
+        setSelectedEdgeId(null);
+      } else if (onAddEdge) {
+        await onAddEdge({ fromId: edgeFromId, toId: edgeToId, kind: edgeKind, properties });
+      }
+      setEditingEdgeTarget(null);
       setEdgeModalOpen(false);
     } catch (reason) {
       setEdgeError(reason instanceof Error ? reason.message : 'Không thể nối quan hệ.');
@@ -1500,6 +1637,32 @@ export function KnowledgeGraphCanvas({
               Ẩn cạnh dư
             </label>
           </div>
+
+          {isTeacher && sessionWeekOptions.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label htmlFor="kg-session-week-filter" style={{ fontSize: 12, fontWeight: 600 }}>
+                Buổi học (Tuần gợi ý)
+              </label>
+              <select
+                id="kg-session-week-filter"
+                value={selectedSessionWeek}
+                onChange={(e) => {
+                  setSelectedSessionWeek(e.target.value);
+                  setSelectedNodeId(null);
+                  setSelectedEdgeId(null);
+                  autoFitRef.current = true;
+                }}
+                style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--line)', fontSize: 12.5, background: '#fff' }}
+              >
+                <option value="all">Tất cả buổi học</option>
+                {sessionWeekOptions.map((w) => (
+                  <option key={w} value={w}>
+                    Buổi học {w}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="kg-mode-btns" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {showAll ? (
@@ -2240,6 +2403,15 @@ export function KnowledgeGraphCanvas({
                         <CheckCircle2 size={12} /> Duyệt quan hệ
                       </button>
                     )}
+                    {onUpdateEdge && (
+                      <button
+                        type="button"
+                        className="btn btn-outline sm"
+                        onClick={() => triggerEditEdge(selectedEdge)}
+                      >
+                        <Edit3 size={12} /> Sửa quan hệ
+                      </button>
+                    )}
                     {onDeleteEdge && (
                       <button
                         type="button"
@@ -2408,6 +2580,12 @@ export function KnowledgeGraphCanvas({
                 <X size={14} />
               </button>
             </div>
+
+            {addNodeError && (
+              <div className="form-error" role="alert" style={{ margin: 0, fontSize: 12 }}>
+                {addNodeError}
+              </div>
+            )}
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
               Tên nút *
@@ -2636,7 +2814,7 @@ export function KnowledgeGraphCanvas({
               <button type="button" className="btn btn-outline sm" onClick={() => setAddModalOpen(false)}>
                 Hủy
               </button>
-              <button type="submit" className="btn btn-primary sm" disabled={savingNewNode || !newNodeName.trim()}>
+              <button type="submit" className="btn btn-primary sm" disabled={savingNewNode || !isAddNodeFormComplete}>
                 {savingNewNode ? 'Đang tạo...' : 'Tạo nút & lưu nội dung'}
               </button>
             </div>
@@ -2677,7 +2855,7 @@ export function KnowledgeGraphCanvas({
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: 16 }}>Nối quan hệ giữa hai nút</h3>
+              <h3 style={{ margin: 0, fontSize: 16 }}>{editingEdgeTarget ? 'Sửa quan hệ giữa hai nút' : 'Nối quan hệ giữa hai nút'}</h3>
               <button type="button" className="kg-btn sm" onClick={() => setEdgeModalOpen(false)}>
                 <X size={14} />
               </button>
@@ -2832,8 +3010,10 @@ export function KnowledgeGraphCanvas({
               <button type="button" className="btn btn-outline sm" onClick={() => setEdgeModalOpen(false)}>
                 Hủy
               </button>
-              <button type="submit" className="btn btn-primary sm" disabled={savingEdge || !edgeFromId || !edgeToId}>
-                {savingEdge ? 'Đang nối...' : 'Xác nhận nối cạnh'}
+              <button type="submit" className="btn btn-primary sm" disabled={savingEdge || !isAddEdgeFormComplete}>
+                {savingEdge
+                  ? (editingEdgeTarget ? 'Đang lưu...' : 'Đang nối...')
+                  : (editingEdgeTarget ? 'Lưu sửa quan hệ' : 'Xác nhận nối cạnh')}
               </button>
             </div>
           </form>

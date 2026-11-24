@@ -85,8 +85,12 @@ async function request<T>(path: string, init: RequestInit = {}, _retried = false
     const detail = Array.isArray(error?.detail)
       ? error.detail.map((item) => item.msg).filter(Boolean).join(' ')
       : error?.detail;
+    const fallbackMsg =
+      response.status >= 500 && typeof payload === 'string' && !payload.trim()
+        ? 'Không thể kết nối tới máy chủ Backend (500). Hãy kiểm tra g4lms-BE đã được khởi động chưa.'
+        : `Yêu cầu thất bại (${response.status}).`;
     throw new ApiError(
-      error?.message ?? detail ?? `Yêu cầu thất bại (${response.status}).`,
+      error?.message ?? detail ?? fallbackMsg,
       response.status,
       error?.code,
     );

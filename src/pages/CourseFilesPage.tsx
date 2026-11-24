@@ -7,7 +7,7 @@ import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
 import type { CourseFile } from '../types';
 
-const ALLOWED_FILE = /\.(pdf|ppt|pptx|doc|docx|mp4|mov|zip)$/i;
+const ALLOWED_FILE = /\.(pdf|ppt|pptx|doc|docx|xls|xlsx|mp4|mov|zip)$/i;
 
 function formatBytes(size: number) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
@@ -21,7 +21,7 @@ export default function CourseFilesPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const { data, loading, error } = useAsync(() => api.getCourseFiles(courseId), [courseId]);
   const [files, setFiles] = useState<CourseFile[]>([]);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [actionError, setActionError] = useState('');
   const [uploading, setUploading] = useState(false);
 
@@ -29,34 +29,49 @@ export default function CourseFilesPage() {
     if (data) setFiles(data);
   }, [data]);
 
-  const selectFile = (file?: File) => {
+  const selectFiles = (fileList?: FileList | null) => {
     setActionError('');
-    if (!file) {
-      setSelectedFile(null);
+    if (!fileList || fileList.length === 0) {
+      setSelectedFiles([]);
       return;
     }
-    if (!ALLOWED_FILE.test(file.name)) {
-      setActionError(isVi ? 'Chỉ nhận PDF, Office, MP4/MOV hoặc ZIP.' : 'Accepted formats: PDF, Office, MP4/MOV, or ZIP.');
-      setSelectedFile(null);
-      return;
+    const valid: File[] = [];
+    const invalidNames: string[] = [];
+    for (const file of Array.from(fileList)) {
+      if (!ALLOWED_FILE.test(file.name) || file.size === 0) {
+        invalidNames.push(file.name);
+      } else {
+        valid.push(file);
+      }
     }
-    if (file.size === 0) {
-      setActionError(isVi ? 'Tệp không được để trống.' : 'File cannot be empty.');
-      setSelectedFile(null);
-      return;
+    if (invalidNames.length > 0) {
+      setActionError(
+        isVi
+          ? `Một số tệp không hợp lệ hoặc rỗng đã bị bỏ qua (${invalidNames.join(', ')}). Chỉ nhận PDF, Word, Excel, PowerPoint, MP4/MOV hoặc ZIP.`
+          : `Skipped invalid or empty files (${invalidNames.join(', ')}). Accepted formats: PDF, Word, Excel, PowerPoint, MP4/MOV, or ZIP.`,
+      );
     }
-    setSelectedFile(file);
+    setSelectedFiles(valid);
+  };
+
+  const removeSelectedFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, idx) => idx !== index));
+    if (inputRef.current) inputRef.current.value = '';
   };
 
   const upload = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
     setUploading(true);
     setActionError('');
     try {
-      const uploaded = await api.uploadCourseFile(courseId, selectedFile);
-      setFiles((current) => [uploaded, ...current]);
-      setSelectedFile(null);
+      const uploadedList: CourseFile[] = [];
+      for (const file of selectedFiles) {
+        const uploaded = await api.uploadCourseFile(courseId, file);
+        uploadedList.push(uploaded);
+      }
+      setFiles((current) => [...uploadedList.reverse(), ...current]);
+      setSelectedFiles([]);
       if (inputRef.current) inputRef.current.value = '';
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : (isVi ? 'Không thể tải tệp lên.' : 'Upload failed.'));
@@ -84,30 +99,35 @@ export default function CourseFilesPage() {
           <h2>{isVi ? 'Tải tài liệu mới lên' : 'Upload a course file'}</h2>
           <label className="file-dropzone" htmlFor="course-file-input">
             <Upload size={23} />
-            <strong>{isVi ? 'Chọn tệp từ thiết bị' : 'Choose a file from your device'}</strong>
-            <span>{isVi ? 'PDF, DOC/DOCX, PPT/PPTX, MP4/MOV, ZIP' : 'PDF, DOC/DOCX, PPT/PPTX, MP4/MOV, ZIP'}</span>
+            <strong>{isVi ? 'Chọn một hoặc nhiều tệp từ thiết bị' : 'Choose one or more files from your device'}</strong>
+            <span>{isVi ? 'PDF, Word (.doc/.docx), Excel (.xls/.xlsx), PowerPoint (.ppt/.pptx), MP4/MOV, ZIP' : 'PDF, Word (.doc/.docx), Excel (.xls/.xlsx), PowerPoint (.ppt/.pptx), MP4/MOV, ZIP'}</span>
             <input
               ref={inputRef}
               id="course-file-input"
               type="file"
-              accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.mov,.zip"
-              onChange={(event) => selectFile(event.target.files?.[0])}
+              multiple
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.mp4,.mov,.zip"
+              onChange={(event) => selectFiles(event.target.files)}
             />
           </label>
-          {selectedFile && (
-            <div className="file-selected">
-              <span><FileText size={15} />{selectedFile.name} · {formatBytes(selectedFile.size)}</span>
-              <button type="button" className="icon-plain" aria-label={isVi ? 'Bỏ chọn tệp' : 'Remove selected file'} onClick={() => selectFile()}>
-                <X size={15} />
-              </button>
+          {selectedFiles.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {selectedFiles.map((file, idx) => (
+                <div key={`${file.name}-${idx}`} className="file-selected">
+                  <span><FileText size={15} />{file.name} · {formatBytes(file.size)}</span>
+                  <button type="button" className="icon-plain" aria-label={isVi ? 'Bỏ chọn tệp' : 'Remove selected file'} onClick={() => removeSelectedFile(idx)}>
+                    <X size={15} />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
           <div className="file-upload-actions">
             {import.meta.env.VITE_USE_MOCK_API !== 'false' && (
               <p className="muted">{isVi ? 'Chế độ mock chỉ lưu thông tin tệp; cần backend để lưu nội dung thật.' : 'Mock mode stores file metadata only; a backend is required to persist file contents.'}</p>
             )}
-            <button type="submit" className="btn btn-primary" disabled={!selectedFile || uploading}>
-              <Upload size={14} />{uploading ? (isVi ? 'Đang tải...' : 'Uploading...') : (isVi ? 'Tải lên' : 'Upload')}
+            <button type="submit" className="btn btn-primary" disabled={selectedFiles.length === 0 || uploading}>
+              <Upload size={14} />{uploading ? (isVi ? 'Đang tải...' : 'Uploading...') : (isVi ? `Tải lên${selectedFiles.length > 1 ? ` (${selectedFiles.length})` : ''}` : `Upload${selectedFiles.length > 1 ? ` (${selectedFiles.length})` : ''}`)}
             </button>
           </div>
         </form>

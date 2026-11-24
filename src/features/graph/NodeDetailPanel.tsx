@@ -1,7 +1,9 @@
 import { ArrowRight, Check, Lock, Sparkles } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { NodeDetail } from '../../types';
 
-export function NodeDetailPanel({ detail }: { detail: NodeDetail }) {
+export function NodeDetailPanel({ detail, onAction }: { detail: NodeDetail; onAction?: (detail: NodeDetail) => void }) {
+  const nav = useNavigate();
   const tone = detail.status === 'mastered' ? 'ok' : detail.status === 'review' ? 'warn' : 'muted';
   return (
     <aside className="side-panel detail">
@@ -31,7 +33,13 @@ export function NodeDetailPanel({ detail }: { detail: NodeDetail }) {
             <p>{detail.aiHint}</p>
           </div>
         )}
-        <button className="btn btn-primary btn-block">{detail.cta} <ArrowRight size={12} /></button>
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          onClick={() => (onAction ? onAction(detail) : nav('/courses'))}
+        >
+          {detail.cta} <ArrowRight size={12} />
+        </button>
       </div>
     </aside>
   );

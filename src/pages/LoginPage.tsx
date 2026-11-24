@@ -109,7 +109,19 @@ export default function LoginPage() {
           {error && <p className="form-error" role="alert">{error}</p>}
           {resetMessage && <p className="admin-success" role="status">{resetMessage}</p>}
           <button className="btn btn-primary btn-block" disabled={busy}>Đăng nhập với tư cách {label}</button>
-          <p className="no-account">Chưa có tài khoản? <a href="#" onClick={(e) => e.preventDefault()}>Liên hệ quản trị viên</a></p>
+          <p className="no-account">
+            Chưa có tài khoản?{' '}
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                setError('');
+                setResetMessage('Vui lòng liên hệ quản trị viên qua email support@g4lms.edu.vn hoặc Phòng Đào tạo để được cấp tài khoản.');
+              }}
+            >
+              Liên hệ quản trị viên
+            </a>
+          </p>
 
           <div className="login-note">
             {role === 'student' ? <BookOpen size={12} /> : role === 'teacher' ? <Users size={12} /> : <ShieldCheck size={12} />}

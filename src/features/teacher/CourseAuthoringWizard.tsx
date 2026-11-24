@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   BookOpen,
   Check,
@@ -51,10 +52,29 @@ interface Props {
   onPublishedGraph: () => void;
 }
 
-type Step = 1 | 2 | 3 | 4 | 5;
+type Step = 1 | 2 | 3 | 4;
 
 function newIdempotencyKey(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getSavedWizardStep(courseId: string): Step {
+  try {
+    const raw = window.sessionStorage.getItem(`g4lms.wizard.step.${courseId}`);
+    const parsed = Number(raw);
+    if (parsed >= 1 && parsed <= 4) return parsed as Step;
+  } catch {
+    // Ignore storage errors
+  }
+  return 1;
+}
+
+function saveWizardStep(courseId: string, step: Step): void {
+  try {
+    window.sessionStorage.setItem(`g4lms.wizard.step.${courseId}`, String(step));
+  } catch {
+    // Ignore storage errors
+  }
 }
 
 const CHAPTER_STATE_LABEL: Record<ChapterWorkflowState, { text: string; tone: string }> = {
@@ -95,11 +115,11 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
   const [outline, setOutline] = useState<CourseOutlineData>({ chapters: [], learningOutcomes: [] });
   const [outlineState, setOutlineState] = useState<OutlineState>('DRAFT');
   const [outlineRevision, setOutlineRevision] = useState(1);
-  const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
+  const [syllabusFiles, setSyllabusFiles] = useState<File[]>([]);
 
   // D2 Session lessons state
   const [selectedChapterId, setSelectedChapterId] = useState<string>('');
-  const [chapterFile, setChapterFile] = useState<File | null>(null);
+  const [chapterFiles, setChapterFiles] = useState<File[]>([]);
   const [lessons, setLessons] = useState<ChapterLessonItem[]>([]);
   const [lessonsCursor, setLessonsCursor] = useState<string | null>(null);
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
@@ -111,6 +131,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
   const [relations, setRelations] = useState<CourseRelationItem[]>([]);
   const [relationsCursor, setRelationsCursor] = useState<string | null>(null);
   const [relationRevision, setRelationRevision] = useState(1);
+  const [relationsStale, setRelationsStale] = useState(false);
 
   // D4 Review & D5 Publish state
   const [reviewGraph, setReviewGraph] = useState<KnowledgeGraphData | null>(null);
@@ -147,16 +168,40 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
         hasPublishedGraph ||
         (res.outline.chapters.length > 0 && res.outline.chapters.every((c) => c.state === 'PUBLISHED'));
       if (allPublished) {
-        setStep(5);
+        setStep(4);
       } else if (res.state === 'OUTLINE_APPROVED') {
-        setStep((prev) => (prev === 1 ? 2 : prev));
+        const allChaptersApproved =
+          res.outline.chapters.length > 0 && approvedIds.length === res.outline.chapters.length;
+        const savedStep = getSavedWizardStep(courseId);
+        if (allChaptersApproved) {
+          const weekId = approvedIds[0] || res.outline.chapters[0]?.id || 'week_1';
+          const relRes = await api.getCourseRelations(courseId, null, 20, weekId).catch(() => null);
+          if (relRes) {
+            setRelations(relRes.items);
+            setRelationsCursor(relRes.nextCursor);
+            setRelationRevision(relRes.revision);
+          }
+          const allRelationsReviewed = Boolean(
+            relRes && relRes.items.length > 0 && relRes.items.every((r) => r.decision !== 'PENDING'),
+          );
+          let target: Step = savedStep >= 3 ? 3 : 2;
+          if (allRelationsReviewed && savedStep >= 4) {
+            setReviewConfirmed(true);
+            target = 4;
+          }
+          setStep((prev) => (prev > target ? prev : target));
+        } else {
+          setStep((prev) => (prev < 2 ? 2 : prev));
+        }
+      } else {
+        setStep(1);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Không thể tải khung môn học.');
     } finally {
       setLoading(false);
     }
-  }, [courseId, selectedChapterId]);
+  }, [courseId, hasPublishedGraph, selectedChapterId]);
 
   const loadChapterLessons = useCallback(
     async (cid: string, append = false, cursor?: string | null) => {
@@ -198,9 +243,29 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
     [courseId, relationWeekId],
   );
 
+  const invalidateStep3Relations = useCallback(async () => {
+    setReviewConfirmed(false);
+    if (relations.length === 0) return;
+    setRelationsStale(true);
+    try {
+      const res = await api.discardCourseRelations(courseId, relationRevision);
+      setRelationRevision(res.revision);
+      setRelations([]);
+      setRelationsStale(false);
+    } catch {
+      // Keep stale warning banner so user knows Step 3 relations must be regenerated
+    }
+  }, [courseId, relationRevision, relations.length]);
+
   useEffect(() => {
     void loadOutline();
   }, [courseId]);
+
+  useEffect(() => {
+    if (!loading) {
+      saveWizardStep(courseId, step);
+    }
+  }, [courseId, step, loading]);
 
   const reloadReviewGraph = useCallback(async (syncDraftToBe = false) => {
     try {
@@ -226,8 +291,6 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
     }
     if (step === 3) {
       void loadRelations();
-    }
-    if (step === 4) {
       setReviewLoading(true);
       void reloadReviewGraph().finally(() => setReviewLoading(false));
     }
@@ -248,12 +311,16 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
             setMessage('AI đã trích xuất xong Khung môn học (Buổi học & Chuẩn đầu ra). Hãy rà soát và duyệt.');
             await loadOutline();
           } else if (activeJob.kind === 'lesson' && selectedChapterId) {
+            await invalidateStep3Relations();
             setMessage('AI đã sinh & kiểm tra xong bài học cho buổi học. Hãy duyệt từng bài học.');
             await loadOutline();
             await loadChapterLessons(selectedChapterId);
           } else if (activeJob.kind === 'relation') {
-            setMessage('AI đã sinh xong quan hệ giữa các buổi học. Hãy kiểm duyệt trước khi xuất bản.');
+            setRelationsStale(false);
+            setMessage('AI đã sinh xong quan hệ trên toàn bộ đồ thị. Hãy rà soát và hiệu chỉnh trực tiếp trước khi xuất bản.');
             await loadRelations();
+            setReviewLoading(true);
+            void reloadReviewGraph().finally(() => setReviewLoading(false));
           }
         }
       } catch (reason) {
@@ -277,16 +344,20 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
 
   /* -------------------- D1 Handlers -------------------- */
   const handleRunOutlineJob = async () => {
-    if (!syllabusFile) {
-      setError('Vui lòng chọn tệp đề cương PDF trước.');
+    if (syllabusFiles.length === 0) {
+      setError('Vui lòng chọn ít nhất 1 tệp đề cương PDF trước.');
       return;
     }
     setBusy(true);
     setError('');
     setMessage('');
     try {
-      const { syllabusId } = await api.uploadCourseSyllabus(courseId, syllabusFile);
-      const { jobId, status } = await api.createOutlineJob(courseId, syllabusId, newIdempotencyKey('outline'));
+      let primarySyllabusId = '';
+      for (const file of syllabusFiles) {
+        const res = await api.uploadCourseSyllabus(courseId, file);
+        if (!primarySyllabusId) primarySyllabusId = res.syllabusId;
+      }
+      const { jobId, status } = await api.createOutlineJob(courseId, primarySyllabusId, newIdempotencyKey('outline'));
       setActiveJob({
         kind: 'outline',
         jobId,
@@ -346,14 +417,19 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
   const currentChapter = outline.chapters.find((c) => c.id === selectedChapterId);
 
   const handleUploadChapterDoc = async () => {
-    if (!currentChapter || !chapterFile) return;
+    if (!currentChapter || chapterFiles.length === 0) return;
     setBusy(true);
     setError('');
     setMessage('');
     try {
-      const res = await api.uploadChapterDocument(courseId, currentChapter.id, chapterFile);
-      setChapterFile(null);
-      setMessage(`Đã tải tài liệu lên ${currentChapter.title} (Revision ${res.revision}). Bấm "Sinh bài học (Lesson Job)" để AI tạo bài học.`);
+      let latestRevision = currentChapter.revision;
+      for (const file of chapterFiles) {
+        const res = await api.uploadChapterDocument(courseId, currentChapter.id, file);
+        latestRevision = res.revision;
+      }
+      const uploadedCount = chapterFiles.length;
+      setChapterFiles([]);
+      setMessage(`Đã tải ${uploadedCount} tài liệu lên ${currentChapter.title} (Revision ${latestRevision}). Bấm "Sinh bài học (Lesson Job)" để AI tạo bài học.`);
       await loadOutline();
       await loadChapterLessons(currentChapter.id);
     } catch (reason) {
@@ -397,6 +473,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
     setError('');
     try {
       const res = await api.reopenChapter(courseId, currentChapter.id, currentChapter.revision);
+      await invalidateStep3Relations();
       setMessage(`Đã mở lại buổi học ${currentChapter.title} về trạng thái ${res.state}.`);
       await loadOutline();
     } catch (reason) {
@@ -415,6 +492,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
         changes,
         expectedRevision: currentChapter.revision,
       });
+      await invalidateStep3Relations();
       setLessons((prev) => prev.map((l) => (l.id === lessonId ? res.lesson : l)));
       setOutline((prev) => ({
         ...prev,
@@ -438,6 +516,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
         })),
         expectedRevision: currentChapter.revision,
       });
+      await invalidateStep3Relations();
       setMessage(`Đã duyệt hàng loạt ${res.updatedCount} bài học.`);
       await loadChapterLessons(currentChapter.id);
     } catch (reason) {
@@ -453,6 +532,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
     setError('');
     try {
       const res = await api.approveChapterLessons(courseId, currentChapter.id, currentChapter.revision);
+      await invalidateStep3Relations();
       setMessage(`Buổi học "${currentChapter.title}" đã được duyệt (${res.state}).`);
       await loadOutline();
     } catch (reason) {
@@ -470,6 +550,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
     setError('');
     try {
       await api.discardChapterLessons(courseId, currentChapter.id, currentChapter.revision);
+      await invalidateStep3Relations();
       setLessons([]);
       setMessage('Đã hủy bản nháp bài học của buổi học.');
       await loadOutline();
@@ -494,8 +575,14 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
     (step1Done && outline.chapters.length > 0 && approvedChapters.length === outline.chapters.length);
   const step3Done =
     isPublished ||
-    (step2Done && relations.length > 0 && relations.every((r) => r.decision !== 'PENDING'));
-  const step4Done = (step3Done && reviewConfirmed) || isPublished;
+    (!relationsStale && step2Done && relations.length > 0 && reviewConfirmed);
+  const chapterLocked = isPublished || currentChapter?.state === 'PUBLISHED';
+
+  useEffect(() => {
+    if (isPublished) {
+      setStep(4);
+    }
+  }, [isPublished]);
 
   const handleRunRelationJob = async () => {
     setBusy(true);
@@ -574,6 +661,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
       const res = await api.discardCourseRelations(courseId, relationRevision);
       setRelationRevision(res.revision);
       setRelations([]);
+      setRelationsStale(false);
       setMessage('Đã hủy bản nháp quan hệ giữa các buổi học.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Không thể hủy bản nháp quan hệ.');
@@ -601,16 +689,16 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
       try {
         const latestKg = reviewGraph ?? (await api.getKnowledgeGraph(courseId));
         await api.saveKnowledgeGraph(courseId, serializeKnowledgeGraph(latestKg), {
-          title: `D5 Master Graph v${res.masterVersion}`,
-          note: 'Final graph JSON synced on D5 publish',
+          title: `D4 Course Graph v${res.masterVersion}`,
+          note: 'Final graph JSON synced on D4 publish',
         });
       } catch {
         // Keep publish success even if secondary graph JSON sync fails in offline mock
       }
-      setMessage(`Xuất bản Master Graph v${res.masterVersion} thành công!`);
+      setMessage(`Xuất bản Course Graph v${res.masterVersion} thành công!`);
       await loadOutline();
     } catch (reason) {
-      const msg = reason instanceof Error ? reason.message : 'Không thể xuất bản Master Graph.';
+      const msg = reason instanceof Error ? reason.message : 'Không thể xuất bản Course Graph.';
       setError(msg);
       if (msg.includes('503')) {
         setPendingPublicationId(`pub-${courseId}-${Date.now()}`);
@@ -632,13 +720,13 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
       try {
         const latestKg = reviewGraph ?? (await api.getKnowledgeGraph(courseId));
         await api.saveKnowledgeGraph(courseId, serializeKnowledgeGraph(latestKg), {
-          title: `D5 Master Graph v${res.masterVersion} (Recovered)`,
-          note: 'Final graph JSON synced on D5 recover publish',
+          title: `D4 Course Graph v${res.masterVersion} (Recovered)`,
+          note: 'Final graph JSON synced on D4 recover publish',
         });
       } catch {
         // Ignore secondary sync failure
       }
-      setMessage(`Đã phục hồi và chốt xuất bản Master Graph v${res.masterVersion}!`);
+      setMessage(`Đã phục hồi và chốt xuất bản Course Graph v${res.masterVersion}!`);
       await loadOutline();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Chưa thể phục hồi xuất bản.');
@@ -660,11 +748,10 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
       {/* Stepper Header */}
       <div className="wizard-stepper">
         {[
-          { num: 1 as Step, title: 'D1. Khung môn học', sub: step1Done ? 'Đã duyệt · Khóa' : 'Đề cương & LO', locked: step1Done },
-          { num: 2 as Step, title: 'D2. Bài học theo buổi học', sub: `${approvedChapters.length}/${outline.chapters.length} buổi học duyệt`, locked: !step1Done || step > 2 || isPublished },
-          { num: 3 as Step, title: 'D3. Quan hệ giữa các buổi học', sub: `${relations.filter((r) => r.decision !== 'PENDING').length}/${relations.length} cạnh`, locked: !step2Done || step > 3 || isPublished },
-          { num: 4 as Step, title: 'D4. Review toàn bộ đồ thị', sub: step4Done ? 'Đã xác nhận · Khóa' : 'Kiểm tra trước xuất bản', locked: !step3Done || step > 4 || isPublished },
-          { num: 5 as Step, title: 'D5. Xuất bản Master Graph', sub: isPublished ? `Đã xuất bản${masterVersion > 0 ? ` v${masterVersion}` : ''} · Khóa` : 'Chưa xuất bản', locked: !step4Done },
+          { num: 1 as Step, title: 'D1. Khung môn học', sub: step > 1 || isPublished ? 'Đã duyệt · Khóa' : (step1Done ? 'Đã duyệt' : 'Đề cương & LO'), locked: step !== 1 },
+          { num: 2 as Step, title: 'D2. Bài học theo buổi học', sub: `${approvedChapters.length}/${outline.chapters.length} buổi học duyệt${step !== 2 ? ' · Khóa' : ''}`, locked: step !== 2 },
+          { num: 3 as Step, title: 'D3. Sinh quan hệ trên toàn bộ đồ thị', sub: step > 3 || isPublished ? 'Đã xác nhận · Khóa' : (relations.length > 0 ? `${relations.length} quan hệ · Đã sinh` : 'Sinh & rà soát đồ thị'), locked: step !== 3 },
+          { num: 4 as Step, title: 'D4. Xuất bản Course Graph', sub: isPublished ? `Đã xuất bản${masterVersion > 0 ? ` v${masterVersion}` : ''} · Khóa` : (step === 4 ? 'Sẵn sàng xuất bản' : 'Chưa xuất bản · Khóa'), locked: step !== 4 },
         ].map((item, idx) => (
           <div key={item.num} style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
             <button
@@ -679,7 +766,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                 <small>{item.sub}</small>
               </span>
             </button>
-            {idx < 4 && <ChevronRight size={16} className="muted-icon" />}
+            {idx < 3 && <ChevronRight size={16} className="muted-icon" />}
           </div>
         ))}
       </div>
@@ -770,15 +857,23 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
           <div className="wizard-upload-row">
             <label className="wizard-file-box">
               <Upload size={15} />
-              <span>{syllabusFile ? syllabusFile.name : 'Chọn tệp đề cương chi tiết (PDF)...'}</span>
+              <span>
+                {syllabusFiles.length > 0
+                  ? (syllabusFiles.length === 1
+                    ? syllabusFiles[0].name
+                    : `Đã chọn ${syllabusFiles.length} tệp: ${syllabusFiles.map((f) => f.name).join(', ')}`)
+                  : 'Chọn một hoặc nhiều tệp đề cương (PDF, Word, Excel)...'}
+              </span>
               <input
                 type="file"
-                accept="application/pdf"
+                accept="application/pdf,.pdf,.doc,.docx,.xls,.xlsx"
+                multiple
                 hidden
-                onChange={(e) => setSyllabusFile(e.target.files?.[0] ?? null)}
+                disabled={busy || step1Done}
+                onChange={(e) => setSyllabusFiles(Array.from(e.target.files ?? []))}
               />
             </label>
-            <button type="button" className="btn btn-primary" disabled={busy || !syllabusFile} onClick={handleRunOutlineJob}>
+            <button type="button" className="btn btn-primary" disabled={busy || syllabusFiles.length === 0 || step1Done} onClick={handleRunOutlineJob}>
               <Sparkles size={13} /> Trích xuất khung bằng AI
             </button>
           </div>
@@ -791,6 +886,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                 <button
                   type="button"
                   className="btn btn-outline btn-sm"
+                  disabled={busy || step1Done}
                   onClick={() =>
                     setOutline((prev) => ({
                       ...prev,
@@ -812,6 +908,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                     <div key={idx} className="wizard-row-edit">
                       <input
                         style={{ width: 84 }}
+                        disabled={busy || step1Done}
                         value={lo.code}
                         onChange={(e) =>
                           setOutline((prev) => ({
@@ -822,6 +919,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                       />
                       <input
                         style={{ flex: 1 }}
+                        disabled={busy || step1Done}
                         value={lo.description}
                         onChange={(e) =>
                           setOutline((prev) => ({
@@ -836,6 +934,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                         type="button"
                         className="icon-btn"
                         aria-label="Xóa LO"
+                        disabled={busy || step1Done}
                         onClick={() =>
                           setOutline((prev) => ({
                             ...prev,
@@ -858,6 +957,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                 <button
                   type="button"
                   className="btn btn-outline btn-sm"
+                  disabled={busy || step1Done}
                   onClick={() =>
                     setOutline((prev) => ({
                       ...prev,
@@ -887,6 +987,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                       <span className="pill-badge muted">{ch.id}</span>
                       <input
                         style={{ flex: 1 }}
+                        disabled={busy || step1Done}
                         value={ch.title}
                         onChange={(e) =>
                           setOutline((prev) => ({
@@ -899,6 +1000,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                         type="button"
                         className="icon-btn"
                         aria-label="Xóa buổi học"
+                        disabled={busy || step1Done}
                         onClick={() =>
                           setOutline((prev) => ({
                             ...prev,
@@ -916,17 +1018,22 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
           </div>
 
           <div className="wizard-footer-actions">
-            <button type="button" className="btn btn-outline" disabled={busy} onClick={handleSaveOutlineDraft}>
+            <button type="button" className="btn btn-outline" disabled={busy || step1Done} onClick={handleSaveOutlineDraft}>
               <Save size={13} /> Lưu bản nháp
             </button>
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy || outline.chapters.length === 0 || outline.learningOutcomes.length === 0}
+              disabled={busy || step1Done || outline.chapters.length === 0 || outline.learningOutcomes.length === 0}
               onClick={handleApproveOutline}
             >
               <CheckCircle2 size={13} /> Duyệt khung môn học (OUTLINE_APPROVED)
             </button>
+            {step1Done && !isPublished && (
+              <button type="button" className="btn btn-primary" onClick={() => setStep(2)}>
+                Sang Bước 2: Bài học theo buổi học <ArrowRight size={13} />
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -940,7 +1047,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
               <p className="muted-s">Chọn từng buổi học, tải tài liệu PDF buổi học đó, sinh bài học và duyệt trước khi chuyển sang Bước 3.</p>
             </div>
             <button type="button" className="btn btn-primary" onClick={() => setStep(3)} disabled={!step2Done}>
-              Sang Bước 3: Quan hệ giữa các buổi học <ArrowRight size={13} />
+              Sang Bước 3: Sinh quan hệ trên toàn bộ đồ thị <ArrowRight size={13} />
             </button>
           </div>
 
@@ -953,7 +1060,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                   type="button"
                   onClick={() => {
                     setSelectedChapterId(ch.id);
-                    setChapterFile(null);
+                    setChapterFiles([]);
                   }}
                   className={`wizard-chapter-item${selectedChapterId === ch.id ? ' on' : ''}`}
                 >
@@ -983,12 +1090,12 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       {currentChapter.state === 'PUBLISHED' && (
-                        <button type="button" className="btn btn-outline" disabled={busy} onClick={handleReopenChapter}>
+                        <button type="button" className="btn btn-outline" disabled={busy || isPublished} onClick={handleReopenChapter}>
                           <RotateCcw size={13} /> Mở lại buổi học (Reopen)
                         </button>
                       )}
                       {lessons.length > 0 && (
-                        <button type="button" className="btn btn-outline" disabled={busy} onClick={handleDiscardChapterDraft}>
+                        <button type="button" className="btn btn-outline" disabled={busy || chapterLocked} onClick={handleDiscardChapterDraft}>
                           <Trash2 size={13} /> Hủy bản nháp (Discard)
                         </button>
                       )}
@@ -999,27 +1106,35 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                   <div className="wizard-upload-row">
                     <label className="wizard-file-box">
                       <FileText size={15} />
-                      <span>{chapterFile ? chapterFile.name : 'Chọn tệp PDF / Slide của buổi học này...'}</span>
+                      <span>
+                        {chapterFiles.length > 0
+                          ? (chapterFiles.length === 1
+                            ? chapterFiles[0].name
+                            : `Đã chọn ${chapterFiles.length} tệp: ${chapterFiles.map((f) => f.name).join(', ')}`)
+                          : 'Chọn một hoặc nhiều tệp PDF / Word / Excel / Slide của buổi học này...'}
+                      </span>
                       <input
                         key={currentChapter.id}
                         type="file"
-                        accept="application/pdf,.ppt,.pptx,.doc,.docx"
+                        accept="application/pdf,.pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx"
+                        multiple
                         hidden
-                        onChange={(e) => setChapterFile(e.target.files?.[0] ?? null)}
+                        disabled={busy || chapterLocked}
+                        onChange={(e) => setChapterFiles(Array.from(e.target.files ?? []))}
                       />
                     </label>
                     <button
                       type="button"
                       className="btn btn-outline"
-                      disabled={busy || !chapterFile || currentChapter.state === 'PUBLISHED'}
+                      disabled={busy || chapterFiles.length === 0 || chapterLocked}
                       onClick={handleUploadChapterDoc}
                     >
-                      <Upload size={13} /> Tải lên buổi học
+                      <Upload size={13} /> Tải lên buổi học{chapterFiles.length > 1 ? ` (${chapterFiles.length})` : ''}
                     </button>
                     <button
                       type="button"
                       className="btn btn-primary"
-                      disabled={busy || currentChapter.state === 'PUBLISHED'}
+                      disabled={busy || chapterLocked}
                       onClick={handleRunLessonJob}
                     >
                       <Play size={13} /> Sinh bài học (Lesson Job)
@@ -1037,13 +1152,13 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                       <div className="wizard-review-toolbar">
                         <span>Hiển thị {lessons.length} mục</span>
                         <div style={{ display: 'flex', gap: 8 }}>
-                          <button type="button" className="btn btn-outline" disabled={busy} onClick={handleBatchApproveLessons}>
+                          <button type="button" className="btn btn-outline" disabled={busy || chapterLocked} onClick={handleBatchApproveLessons}>
                             <Check size={13} /> Duyệt hàng loạt (Batch Review)
                           </button>
                           <button
                             type="button"
                             className="btn btn-primary"
-                            disabled={busy || lessons.some((l) => l.decision === 'PENDING')}
+                            disabled={busy || chapterLocked || lessons.some((l) => l.decision === 'PENDING')}
                             onClick={handleApproveChapter}
                           >
                             <CheckCircle2 size={13} /> Duyệt buổi học (LESSON_APPROVED)
@@ -1157,6 +1272,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                               <button
                                 type="button"
                                 className="btn btn-outline btn-sm"
+                                disabled={busy || chapterLocked}
                                 onClick={() => void handleLessonDecision(lesson.id, 'APPROVE')}
                               >
                                 <Check size={12} /> Duyệt
@@ -1164,6 +1280,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                               <button
                                 type="button"
                                 className="btn btn-outline btn-sm"
+                                disabled={busy || chapterLocked}
                                 onClick={() => {
                                   setEditingLessonId(lesson.id);
                                   setEditTitle(lesson.title);
@@ -1175,6 +1292,7 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                               <button
                                 type="button"
                                 className="btn btn-outline btn-sm"
+                                disabled={busy || chapterLocked}
                                 onClick={() => void handleLessonDecision(lesson.id, 'REJECT')}
                               >
                                 <X size={12} /> Từ chối
@@ -1200,19 +1318,60 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
               )}
             </div>
           </div>
+
+          <div className="wizard-footer-actions" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+            <button type="button" className="btn btn-outline" disabled={busy || isPublished} onClick={() => setStep(1)}>
+              <ArrowLeft size={13} /> Quay lại Bước 1
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => setStep(3)} disabled={!step2Done}>
+              Sang Bước 3: Sinh quan hệ trên toàn bộ đồ thị <ArrowRight size={13} />
+            </button>
+          </div>
         </div>
       )}
 
-      {/* STEP 3: D3 CROSS-CHAPTER RELATIONS */}
+      {/* STEP 3: D3 GENERATE RELATIONS & REVIEW FULL GRAPH */}
       {step === 3 && (
         <div className="wizard-panel">
           <div className="wizard-panel-head">
             <div>
-              <h3>D3. Quan hệ giữa các buổi học</h3>
-              <p className="muted-s">Chọn ít nhất 2 buổi học đã duyệt để AI suy luận quan hệ tiên quyết / liên kết giữa các buổi học.</p>
+              <h3>D3. Sinh quan hệ trên toàn bộ đồ thị</h3>
+              <p className="muted-s">
+                Chọn ít nhất 2 buổi học đã duyệt để AI suy luận quan hệ, sau đó kiểm tra và chỉnh sửa trực tiếp nút &amp; quan hệ trên toàn bộ đồ thị trước khi xuất bản.
+              </p>
             </div>
-            <span className="pill-badge muted">Rev {relationRevision}</span>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className="pill-badge muted">Rev {relationRevision}</span>
+              {relations.length > 0 && !relationsStale && (
+                <>
+                  <button
+                    type="button"
+                    className={`btn btn-outline sm${d4EditMode && !isPublished ? ' on' : ''}`}
+                    disabled={isPublished}
+                    onClick={() => setD4EditMode((v) => !v)}
+                  >
+                    <Pencil size={13} /> {d4EditMode && !isPublished ? 'Đang bật hiệu chỉnh' : 'Bật hiệu chỉnh'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-outline sm${reviewHealthOpen ? ' on' : ''}`}
+                    onClick={() => setReviewHealthOpen((o) => !o)}
+                  >
+                    <Activity size={13} /> {reviewHealthOpen ? 'Ẩn kiểm tra tính hoàn thiện' : 'Kiểm tra tính hoàn thiện'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
+
+          {relationsStale && (
+            <div className="wizard-banner error" role="alert" style={{ marginBottom: 12 }}>
+              <AlertTriangle size={15} />
+              <span>
+                Bài học ở Bước 2 đã thay đổi. Vui lòng bấm <b>"Sinh quan hệ giữa các buổi học (Relation Job)"</b> để cập nhật lại đồ thị cho khớp trước khi sang Bước 4.
+              </span>
+            </div>
+          )}
 
           <div className="wizard-card" style={{ marginBottom: 14 }}>
             <h4 style={{ marginBottom: 8 }}>Chọn các buổi học đã duyệt (tối thiểu 2 buổi học):</h4>
@@ -1221,10 +1380,10 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                 const isApproved = ch.state === 'LESSON_APPROVED' || ch.state === 'PUBLISHED';
                 const checked = selectedChapterIds.includes(ch.id);
                 return (
-                  <label key={ch.id} className={`wizard-check-pill${!isApproved ? ' disabled' : ''}${checked ? ' on' : ''}`}>
+                  <label key={ch.id} className={`wizard-check-pill${!isApproved || isPublished ? ' disabled' : ''}${checked ? ' on' : ''}`}>
                     <input
                       type="checkbox"
-                      disabled={!isApproved}
+                      disabled={!isApproved || isPublished}
                       checked={checked}
                       onChange={() =>
                         setSelectedChapterIds((prev) =>
@@ -1242,141 +1401,224 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || selectedChapterIds.length < 2}
+                disabled={busy || isPublished || selectedChapterIds.length < 2}
                 onClick={handleRunRelationJob}
               >
                 <GitBranch size={13} /> Sinh quan hệ giữa các buổi học (Relation Job)
               </button>
               {relations.length > 0 && (
-                <button type="button" className="btn btn-outline" disabled={busy} onClick={handleDiscardRelations}>
+                <button type="button" className="btn btn-outline" disabled={busy || isPublished} onClick={handleDiscardRelations}>
                   <Trash2 size={13} /> Hủy bản nháp quan hệ
                 </button>
               )}
             </div>
           </div>
 
-          {relations.length === 0 ? (
+          {relations.length === 0 || relationsStale ? (
             <div className="wizard-empty-box">
               <GitBranch size={22} />
-              <p>Chưa có quan hệ giữa các buổi học nào. Chọn tối thiểu 2 buổi học đã duyệt và bấm "Sinh quan hệ giữa các buổi học".</p>
+              <p>Chưa có quan hệ giữa các buổi học nào. Chọn tối thiểu 2 buổi học đã duyệt và bấm "Sinh quan hệ giữa các buổi học" để hiển thị toàn bộ đồ thị.</p>
             </div>
           ) : (
             <>
-              <div className="wizard-review-toolbar">
-                <span>Hiển thị {relations.length} quan hệ</span>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" className="btn btn-outline" disabled={busy} onClick={handleBatchApproveRelations}>
-                    <Check size={13} /> Duyệt tất cả (Batch Review)
-                  </button>
-                  <button type="button" className="btn btn-primary" disabled={!step3Done} onClick={() => setStep(4)}>
-                    Sang Bước 4: Review toàn bộ đồ thị <ArrowRight size={13} />
-                  </button>
+              <div className="wizard-summary-grid" style={{ marginBottom: 14 }}>
+                <div className="wizard-stat-box">
+                  <Layers size={18} />
+                  <b>{reviewGraph?.nodes.filter((n) => n.type !== 'Course').length ?? 0}</b>
+                  <span>Tổng số nút đồ thị</span>
+                </div>
+                <div className="wizard-stat-box">
+                  <GitBranch size={18} />
+                  <b>{reviewGraph?.edges.length ?? 0}</b>
+                  <span>Tổng số quan hệ</span>
+                </div>
+                <div className="wizard-stat-box">
+                  <BookOpen size={18} />
+                  <b>{approvedChapters.length} / {outline.chapters.length}</b>
+                  <span>Buổi học đã duyệt</span>
+                </div>
+                <div className="wizard-stat-box">
+                  <Eye size={18} />
+                  <b>{relations.filter((r) => r.decision !== 'REJECT').length}</b>
+                  <span>Quan hệ giữa các buổi</span>
                 </div>
               </div>
 
-              <div className="wizard-items-list">
-                {relations.map((rel) => (
-                  <div key={rel.id} className="wizard-review-card">
-                    <div className="wizard-review-top">
-                      <div>
-                        <b>
-                          [{rel.sourceChapterId}] {rel.sourceName} ──({rel.relationType}{rel.strength ? ` · ${rel.strength}` : ''})→ [{rel.targetChapterId}] {rel.targetName}
-                        </b>
-                        <div className="wizard-meta-row">
-                          <span>Nguồn: <code>{rel.sourceRef}</code></span>
-                          {rel.confidence != null && <span>Tin cậy: {Math.round(rel.confidence * 100)}%</span>}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                        {rel.assessment && (
-                          <span
-                            className="pill-badge"
-                            style={{
-                              color: VERDICT_BADGE[rel.assessment.verdict].color,
-                              borderColor: VERDICT_BADGE[rel.assessment.verdict].color,
-                            }}
-                          >
-                            {VERDICT_BADGE[rel.assessment.verdict].text}
-                          </span>
-                        )}
-                        <span
-                          className="pill-badge"
-                          style={{ color: DECISION_BADGE[rel.decision].color, borderColor: DECISION_BADGE[rel.decision].color }}
-                        >
-                          {DECISION_BADGE[rel.decision].text}
-                        </span>
-                      </div>
-                    </div>
-                    {rel.reason && (
-                      <p className="wizard-item-body" style={{ marginTop: 6 }}>
-                        <b>Lý do:</b> {rel.reason}
-                        {rel.requiredKnowledge ? ` (Kiến thức cần: ${rel.requiredKnowledge})` : ''}
-                      </p>
-                    )}
-                    {rel.evidence && rel.evidence.length > 0 && (
-                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        {rel.evidence.map((ev, idx) => (
-                          <div key={idx} style={{ padding: '4px 8px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--line)', fontSize: 11 }}>
-                            <b style={{ color: 'var(--primary)' }}>{ev.slideId}:</b> <i>"{ev.quote}"</i>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {rel.aiComment && (
-                      <div className="wizard-ai-note">
-                        <Sparkles size={12} /> <span>{rel.aiComment}</span>
-                      </div>
-                    )}
-                    <div className="wizard-item-actions">
-                      <button type="button" className="btn btn-outline btn-sm" onClick={() => void handleRelationDecision(rel.id, 'APPROVE')}>
-                        <Check size={12} /> Duyệt
-                      </button>
-                      <button type="button" className="btn btn-outline btn-sm" onClick={() => void handleRelationDecision(rel.id, 'REJECT')}>
-                        <X size={12} /> Từ chối
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {relationsCursor && (
-                <button type="button" className="btn btn-outline" onClick={() => void loadRelations(true, relationsCursor)}>
-                  Tải thêm quan hệ
-                </button>
+              {reviewLoading ? (
+                <div className="wizard-empty-box">Đang tải toàn bộ đồ thị…</div>
+              ) : reviewGraph && reviewGraph.nodes.some((n) => n.type !== 'Course') ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    height: 540,
+                    minHeight: 420,
+                    border: '1px solid var(--line)',
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    background: '#fff',
+                  }}
+                >
+                  <KnowledgeGraphCanvas
+                    courseId={courseId}
+                    data={reviewGraph}
+                    role="teacher"
+                    editMode={d4EditMode && !isPublished}
+                    rightOpen={!reviewHealthOpen}
+                    onQuickUpdateNode={async (nodeId, input) => {
+                      setError('');
+                      try {
+                        await api.updateGraphNode(courseId, nodeId, input);
+                        setMessage(`Đã cập nhật nút "${input.name}".`);
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : 'Không thể cập nhật nút.');
+                      }
+                    }}
+                    onAddNode={async (input) => {
+                      setError('');
+                      try {
+                        await api.createGraphNode(courseId, {
+                          name: input.name,
+                          nodeType: input.nodeType,
+                          clusterId: input.parentId ?? null,
+                          description: input.description,
+                          properties: input.properties,
+                        });
+                        setMessage(`Đã thêm nút "${input.name}" (${input.nodeType}) kèm nội dung.`);
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : 'Không thể thêm nút.');
+                      }
+                    }}
+                    onAddEdge={async (input: { fromId: string; toId: string; kind: KnowledgeEdgeType; properties?: Record<string, unknown> }) => {
+                      setError('');
+                      try {
+                        await api.createGraphEdge(courseId, input);
+                        setMessage(`Đã nối quan hệ ${input.fromId} → ${input.toId} (${input.kind}).`);
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        const msg = reason instanceof Error ? reason.message : 'Không thể nối quan hệ.';
+                        setError(msg);
+                        throw reason;
+                      }
+                    }}
+                    onUpdateEdge={async (input) => {
+                      setError('');
+                      try {
+                        await api.deleteGraphEdge(courseId, {
+                          fromId: input.oldFromId,
+                          toId: input.oldToId,
+                          edgeType: input.oldEdgeType,
+                        });
+                        await api.createGraphEdge(courseId, {
+                          fromId: input.fromId,
+                          toId: input.toId,
+                          kind: input.kind,
+                          properties: input.properties,
+                        });
+                        setMessage(`Đã cập nhật quan hệ ${input.fromId} → ${input.toId} (${input.kind}).`);
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        const msg = reason instanceof Error ? reason.message : 'Không thể sửa quan hệ.';
+                        setError(msg);
+                        throw reason;
+                      }
+                    }}
+                    onMergeNodes={async (input: { keepId: string; mergeId: string }) => {
+                      setError('');
+                      try {
+                        await api.mergeGraphNodes(courseId, input);
+                        setMessage(`Đã gộp ${input.mergeId} vào ${input.keepId}.`);
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : 'Không thể gộp nút.');
+                      }
+                    }}
+                    onDeleteNode={async (nodeId: string) => {
+                      setError('');
+                      try {
+                        await api.deleteGraphNode(courseId, nodeId);
+                        setMessage(`Đã xóa nút ${nodeId}.`);
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : 'Không thể xóa nút.');
+                      }
+                    }}
+                    onDeleteEdge={async (input: { fromId: string; toId: string; edgeType: string }) => {
+                      setError('');
+                      try {
+                        await api.deleteGraphEdge(courseId, input);
+                        setMessage(`Đã xóa quan hệ ${input.fromId} → ${input.toId}.`);
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : 'Không thể xóa quan hệ.');
+                      }
+                    }}
+                    onApproveNode={async (nodeId: string) => {
+                      setError('');
+                      try {
+                        await api.updateGraphNode(courseId, nodeId, { approved: true, status: 'approved' });
+                        setMessage('Đã duyệt nút kiến thức.');
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : 'Không thể duyệt nút.');
+                      }
+                    }}
+                    onApproveEdge={async (input: { fromId: string; toId: string; edgeType: string }) => {
+                      setError('');
+                      try {
+                        await api.approveGraphEdge(courseId, input);
+                        setMessage('Đã duyệt quan hệ kiến thức.');
+                        await reloadReviewGraph(true);
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : 'Không thể duyệt quan hệ.');
+                      }
+                    }}
+                    onOpenNodeEditor={(id) => nav(`/teacher/courses/${courseId}/nodes/${id}`)}
+                  />
+                  {reviewHealthOpen && (
+                    <GraphHealthPanel
+                      data={reviewGraph}
+                      onClose={() => setReviewHealthOpen(false)}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="wizard-empty-box">
+                  <Eye size={22} />
+                  <p>Chưa có dữ liệu đồ thị để xem trước. Hãy duyệt các buổi học ở D2 trước.</p>
+                </div>
               )}
             </>
           )}
-        </div>
-      )}
 
-      {/* STEP 4: REVIEW FULL GRAPH BEFORE PUBLISH */}
-      {step === 4 && (
-        <div className="wizard-panel">
-          <div className="wizard-panel-head">
-            <div>
-              <h3>D4. Review toàn bộ đồ thị trước khi xuất bản</h3>
-              <p className="muted-s">
-                Kiểm tra trực quan toàn bộ nút kiến thức, quan hệ tiên quyết và tình trạng toàn vẹn đồ thị trước khi chốt xuất bản.
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className={`btn btn-outline sm${d4EditMode ? ' on' : ''}`}
-                onClick={() => setD4EditMode((v) => !v)}
-              >
-                <Pencil size={13} /> {d4EditMode ? 'Đang bật hiệu chỉnh' : 'Bật hiệu chỉnh'}
-              </button>
-              <button
-                type="button"
-                className={`btn btn-outline sm${reviewHealthOpen ? ' on' : ''}`}
-                onClick={() => setReviewHealthOpen((o) => !o)}
-              >
-                <Activity size={13} /> {reviewHealthOpen ? 'Ẩn kiểm tra tính hoàn thiện' : 'Kiểm tra tính hoàn thiện'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary sm"
-                onClick={async () => {
+          <div className="wizard-footer-actions" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+            <button type="button" className="btn btn-outline" disabled={busy || isPublished} onClick={() => setStep(2)}>
+              <ArrowLeft size={13} /> Quay lại Bước 2
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || relations.length === 0 || relationsStale}
+              onClick={async () => {
+                setBusy(true);
+                setError('');
+                try {
+                  if (relations.some((r) => r.decision === 'PENDING')) {
+                    const res = await api.batchReviewCourseRelations(
+                      courseId,
+                      {
+                        items: relations.map((r) => ({
+                          relationId: r.id,
+                          decision: r.decision === 'REJECT' ? 'REJECT' : 'APPROVE',
+                        })),
+                        expectedRevision: relationRevision,
+                      },
+                      relationWeekId,
+                    );
+                    setRelationRevision(res.revision);
+                    await loadRelations();
+                  }
                   if (reviewGraph) {
                     try {
                       await api.saveKnowledgeGraph(courseId, serializeKnowledgeGraph(reviewGraph));
@@ -1385,182 +1627,26 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
                     }
                   }
                   setReviewConfirmed(true);
-                  setStep(5);
-                }}
-              >
-                Sang Bước 5: Xuất bản <ArrowRight size={13} />
-              </button>
-            </div>
-          </div>
-
-          <div className="wizard-summary-grid" style={{ marginBottom: 14 }}>
-            <div className="wizard-stat-box">
-              <Layers size={18} />
-              <b>{reviewGraph?.nodes.filter((n) => n.type !== 'Course').length ?? 0}</b>
-              <span>Tổng số nút đồ thị</span>
-            </div>
-            <div className="wizard-stat-box">
-              <GitBranch size={18} />
-              <b>{reviewGraph?.edges.length ?? 0}</b>
-              <span>Tổng số quan hệ</span>
-            </div>
-            <div className="wizard-stat-box">
-              <BookOpen size={18} />
-              <b>{approvedChapters.length} / {outline.chapters.length}</b>
-              <span>Buổi học đã duyệt</span>
-            </div>
-            <div className="wizard-stat-box">
-              <Eye size={18} />
-              <b>{relations.filter((r) => r.decision !== 'REJECT' && r.decision !== 'PENDING').length}</b>
-              <span>Quan hệ giữa buổi duyệt</span>
-            </div>
-          </div>
-
-          {reviewLoading ? (
-            <div className="wizard-empty-box">Đang tải bản xem trước toàn bộ đồ thị…</div>
-          ) : reviewGraph && reviewGraph.nodes.some((n) => n.type !== 'Course') ? (
-            <div
-              style={{
-                display: 'flex',
-                height: 540,
-                minHeight: 420,
-                border: '1px solid var(--line)',
-                borderRadius: 12,
-                overflow: 'hidden',
-                background: '#fff',
+                  setStep(4);
+                } catch (reason) {
+                  setError(reason instanceof Error ? reason.message : 'Không thể xác nhận quan hệ trước khi xuất bản.');
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              <KnowledgeGraphCanvas
-                courseId={courseId}
-                data={reviewGraph}
-                role="teacher"
-                editMode={d4EditMode}
-                rightOpen={!reviewHealthOpen}
-                onQuickUpdateNode={async (nodeId, input) => {
-                  setError('');
-                  try {
-                    await api.updateGraphNode(courseId, nodeId, input);
-                    setMessage(`Đã cập nhật nút "${input.name}".`);
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : 'Không thể cập nhật nút.');
-                  }
-                }}
-                onAddNode={async (input) => {
-                  setError('');
-                  try {
-                    await api.createGraphNode(courseId, {
-                      name: input.name,
-                      nodeType: input.nodeType,
-                      clusterId: input.parentId ?? null,
-                      description: input.description,
-                      properties: input.properties,
-                    });
-                    setMessage(`Đã thêm nút "${input.name}" (${input.nodeType}) kèm nội dung.`);
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : 'Không thể thêm nút.');
-                  }
-                }}
-                onAddEdge={async (input: { fromId: string; toId: string; kind: KnowledgeEdgeType; properties?: Record<string, unknown> }) => {
-                  setError('');
-                  try {
-                    await api.createGraphEdge(courseId, input);
-                    setMessage(`Đã nối quan hệ ${input.fromId} → ${input.toId} (${input.kind}).`);
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    const msg = reason instanceof Error ? reason.message : 'Không thể nối quan hệ.';
-                    setError(msg);
-                    throw reason;
-                  }
-                }}
-                onMergeNodes={async (input: { keepId: string; mergeId: string }) => {
-                  setError('');
-                  try {
-                    await api.mergeGraphNodes(courseId, input);
-                    setMessage(`Đã gộp ${input.mergeId} vào ${input.keepId}.`);
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : 'Không thể gộp nút.');
-                  }
-                }}
-                onDeleteNode={async (nodeId: string) => {
-                  setError('');
-                  try {
-                    await api.deleteGraphNode(courseId, nodeId);
-                    setMessage(`Đã xóa nút ${nodeId}.`);
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : 'Không thể xóa nút.');
-                  }
-                }}
-                onDeleteEdge={async (input: { fromId: string; toId: string; edgeType: string }) => {
-                  setError('');
-                  try {
-                    await api.deleteGraphEdge(courseId, input);
-                    setMessage(`Đã xóa quan hệ ${input.fromId} → ${input.toId}.`);
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : 'Không thể xóa quan hệ.');
-                  }
-                }}
-                onApproveNode={async (nodeId: string) => {
-                  setError('');
-                  try {
-                    await api.updateGraphNode(courseId, nodeId, { approved: true, status: 'approved' });
-                    setMessage('Đã duyệt nút kiến thức.');
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : 'Không thể duyệt nút.');
-                  }
-                }}
-                onApproveEdge={async (input: { fromId: string; toId: string; edgeType: string }) => {
-                  setError('');
-                  try {
-                    await api.approveGraphEdge(courseId, input);
-                    setMessage('Đã duyệt quan hệ kiến thức.');
-                    await reloadReviewGraph(true);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : 'Không thể duyệt quan hệ.');
-                  }
-                }}
-                onOpenNodeEditor={(id) => nav(`/teacher/courses/${courseId}/nodes/${id}`)}
-              />
-              {reviewHealthOpen && (
-                <GraphHealthPanel
-                  data={reviewGraph}
-                  onClose={() => setReviewHealthOpen(false)}
-                />
-              )}
-            </div>
-          ) : (
-            <div className="wizard-empty-box">
-              <Eye size={22} />
-              <p>Chưa có dữ liệu đồ thị để xem trước. Hãy duyệt các buổi học ở D2 và quan hệ ở D3 trước.</p>
-            </div>
-          )}
-
-          <div className="wizard-footer-actions" style={{ marginTop: 14 }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                setReviewConfirmed(true);
-                setStep(5);
-              }}
-            >
-              Xác nhận đạt &amp; Sang Bước 5: Xuất bản <ArrowRight size={13} />
+              Xác nhận đạt &amp; Sang Bước 4: Xuất bản <ArrowRight size={13} />
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 5: D5 PUBLISH MASTER GRAPH */}
-      {step === 5 && (
+      {/* STEP 4: D4 PUBLISH COURSE GRAPH */}
+      {step === 4 && (
         <div className="wizard-panel">
           <div className="wizard-panel-head">
             <div>
-              <h3>D5. Xuất bản Master Graph theo môn</h3>
+              <h3>D4. Xuất bản Course Graph theo môn</h3>
               <p className="muted-s">Ghi idempotent sang Neo4j để sinh viên và hệ thống gợi ý học tập sử dụng phiên bản chính thức.</p>
             </div>
             <span className="pill-badge blue">Master v{masterVersion}</span>
@@ -1596,20 +1682,25 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
             </div>
           )}
 
-          <div className="wizard-footer-actions">
-            {pendingPublicationId && (
-              <button type="button" className="btn btn-outline" disabled={busy} onClick={handleRecoverPublish}>
-                <RefreshCw size={13} /> Phục hồi xuất bản ({pendingPublicationId})
-              </button>
-            )}
-            <button type="button" className="btn btn-primary" disabled={busy || isPublished} onClick={handlePublish}>
-              <Sparkles size={13} /> {isPublished ? 'Đã xuất bản Master Graph (Đã khóa)' : 'Xuất bản Master Graph'}
+          <div className="wizard-footer-actions" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+            <button type="button" className="btn btn-outline" disabled={busy || isPublished} onClick={() => setStep(3)}>
+              <ArrowLeft size={13} /> Quay lại Bước 3
             </button>
-            {isPublished && (
-              <button type="button" className="btn btn-outline" onClick={onPublishedGraph}>
-                Xem Master Graph trực quan <ArrowRight size={13} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {pendingPublicationId && (
+                <button type="button" className="btn btn-outline" disabled={busy} onClick={handleRecoverPublish}>
+                  <RefreshCw size={13} /> Phục hồi xuất bản ({pendingPublicationId})
+                </button>
+              )}
+              <button type="button" className="btn btn-primary" disabled={busy || isPublished} onClick={handlePublish}>
+                <Sparkles size={13} /> {isPublished ? 'Đã xuất bản Course Graph (Đã khóa)' : 'Xuất bản Course Graph'}
               </button>
-            )}
+              {isPublished && (
+                <button type="button" className="btn btn-outline" onClick={onPublishedGraph}>
+                  Xem Course Graph trực quan <ArrowRight size={13} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
