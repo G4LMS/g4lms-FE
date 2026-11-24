@@ -35,11 +35,6 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_BACKEND_URL ?? 'http://localhost:8000',
           changeOrigin: true,
         },
-        '/graph-gen': {
-          target: env.VITE_GRAPH_GEN_TARGET ?? 'http://127.0.0.1:8765',
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/graph-gen/, ''),
-        },
       },
     },
   };

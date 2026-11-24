@@ -44,7 +44,7 @@ export default function StudentCourseDetailPage() {
     navigate(id === 'graph' ? `/courses/${courseId}/graph` : `/courses/${courseId}/${id}`);
   };
   const totalContribution = grades.reduce((sum, item) => (
-    item.score !== null && item.weight !== null ? sum + item.score / item.maxScore * item.weight : sum
+    item.score !== null && item.weight !== null ? sum + (item.score / item.maxScore) * item.weight * 100 : sum
   ), 0);
 
   return (

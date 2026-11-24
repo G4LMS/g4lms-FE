@@ -108,7 +108,16 @@ export default function StudentNodeLearnPage() {
 
   const contentBlocks = useMemo(() => {
     const blocks: Array<{ title: string; body?: string; source?: string }> = [];
-    const detailsToUse: DetailItem[] = rawDetails.length > 0 ? rawDetails : (richFallback?.details ?? []);
+    if (nodeDetail?.contents?.length) {
+      nodeDetail.contents.forEach((c) => {
+        blocks.push({
+          title: c.title,
+          body: c.bodyText ?? undefined,
+          source: c.url ?? (c.role === 'example' ? 'Ví dụ' : 'Định nghĩa'),
+        });
+      });
+    }
+    const detailsToUse: DetailItem[] = rawDetails.length > 0 ? rawDetails : (blocks.length === 0 ? (richFallback?.details ?? []) : []);
     detailsToUse.forEach((d) => {
       if (d.name) {
         const ev = d.evidence?.[0];
@@ -128,11 +137,17 @@ export default function StudentNodeLearnPage() {
       }
     });
     return blocks;
-  }, [rawDetails, rawAspects, richFallback]);
+  }, [nodeDetail?.contents, rawDetails, rawAspects, richFallback]);
 
   const matchingQuiz = useMemo(() => {
     const list = courseQuizzes ?? [];
     if (!list.length) return null;
+    if (nodeDetail?.quizIds?.length) {
+      const byDetail = list.find((q) => nodeDetail.quizIds!.includes(q.id));
+      if (byDetail) return byDetail;
+    }
+    const byConcept = list.find((q) => q.conceptId === decodedNodeId);
+    if (byConcept) return byConcept;
     const chapterRaw = String(props.chapter_id ?? props.chapterId ?? '').toLowerCase();
     const chNum = chapterRaw.match(/\d+/)?.[0];
     if (chNum) {
@@ -140,10 +155,10 @@ export default function StudentNodeLearnPage() {
       if (byChapter) return byChapter;
     }
     return list[0];
-  }, [courseQuizzes, props]);
+  }, [courseQuizzes, nodeDetail?.quizIds, decodedNodeId, props]);
 
   const durationMin = props.duration_min ?? props.durationMin;
-  const defaultWeek = props.default_week ?? props.defaultWeek;
+  const defaultWeek = props.default_week ?? props.defaultWeek ?? props.week;
   const nodeName = nodeModel?.node.name ?? nodeDetail?.title ?? decodedNodeId;
   const rawDesc = nodeModel?.node.description || '';
   const nodeDesc =
@@ -339,9 +354,6 @@ export default function StudentNodeLearnPage() {
                           const isGeneric = cnt.description?.startsWith('Tài liệu bài giảng giải thích chi tiết');
                           const displayQuote = isGeneric ? (evidenceList[0]?.quote ?? '') : (cnt.description ?? '');
                           if (!displayQuote && isGeneric) return null;
-                          const isMastered =
-    String(props.learning_state ?? props.learningState ?? '') === 'mastered' ||
-    (typeof props.mastery === 'number' && props.mastery >= 70);
 
   return (
                             <div

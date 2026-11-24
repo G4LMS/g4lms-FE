@@ -25,9 +25,15 @@ export default function CourseQuizzesPage() {
     () => api.getQuizzes(courseId, isTeacher ? 'teacher' : 'student'),
     [courseId, isTeacher],
   );
+  const { data: graphData } = useAsync(
+    () => (isTeacher && courseId ? api.getKnowledgeGraph(courseId).catch(() => null) : Promise.resolve(null)),
+    [courseId, isTeacher],
+  );
+  const conceptNodes = (graphData?.nodes ?? []).filter((n) => n.type === 'Concept');
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [conceptId, setConceptId] = useState('');
   const [timeLimit, setTimeLimit] = useState('10');
   const [attemptsAllowed, setAttemptsAllowed] = useState('2');
   const [questions, setQuestions] = useState<CreateQuizQuestionInput[]>([emptyQuestion(1)]);
@@ -62,11 +68,13 @@ export default function CourseQuizzesPage() {
         description: description.trim(),
         timeLimitMinutes: Number(timeLimit),
         attemptsAllowed: Number(attemptsAllowed),
+        ...(conceptId ? { conceptId } : {}),
         questions,
       });
       setQuizzes((current) => [quiz, ...current]);
       setTitle('');
       setDescription('');
+      setConceptId('');
       setQuestions([emptyQuestion(1)]);
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : (isVi ? 'Không thể tạo quiz.' : 'Unable to create quiz.'));
@@ -113,6 +121,15 @@ export default function CourseQuizzesPage() {
             <div className="quiz-author-settings">
               <label>{isVi ? 'Thời gian (phút)' : 'Time limit (minutes)'}<input type="number" min="1" max="300" required value={timeLimit} onChange={(event) => setTimeLimit(event.target.value)} /></label>
               <label>{isVi ? 'Số lần làm tối đa' : 'Allowed attempts'}<input type="number" min="1" max="20" required value={attemptsAllowed} onChange={(event) => setAttemptsAllowed(event.target.value)} /></label>
+              <label>
+                {isVi ? 'Gắn với khái niệm (tuỳ chọn)' : 'Linked concept (optional)'}
+                <select value={conceptId} onChange={(event) => setConceptId(event.target.value)}>
+                  <option value="">{isVi ? 'Tự động / Chung theo môn' : 'Auto / Course-wide'}</option>
+                  {conceptNodes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             <div className="quiz-author-questions">

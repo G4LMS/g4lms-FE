@@ -256,7 +256,6 @@ export function UnifiedCourseGraph({ role }: Props) {
   return (
     <div className={`page graph-page${canEdit ? ' teacher' : ''}`}>
       <AppHeader showEditToggle={showAuthoringEditor} editMode={editMode} onEditModeChange={setEditMode} />
-      <CourseIndexSidebar courseId={courseId} role={role} topOffset={74} />
 
       <div className="crumbs top">
         <a onClick={() => nav(canEdit ? '/teacher/courses' : '/home')}>{isVi ? 'Trang chủ' : 'Home'}</a>
@@ -269,14 +268,17 @@ export function UnifiedCourseGraph({ role }: Props) {
       </div>
 
       <div className={`course-subheader${canEdit ? ' teacher' : ''}`}>
-        <div className="subheader-center">
-          <h1>{courseName}</h1>
-          <div className="tabs-pill">
-            {tabs.map((label, index) => (
-              <button key={label} className={index === 0 ? 'on' : ''} onClick={() => onTabClick(index)}>
-                {label}
-              </button>
-            ))}
+        <div className="course-subheader-left">
+          <CourseIndexSidebar courseId={courseId} role={role} inline />
+          <div className="subheader-center">
+            <h1 title={courseName}>{courseName}</h1>
+            <div className="tabs-pill">
+              {tabs.map((label, index) => (
+                <button key={label} className={index === 0 ? 'on' : ''} onClick={() => onTabClick(index)}>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="kg-subheader-actions">
@@ -350,14 +352,14 @@ export function UnifiedCourseGraph({ role }: Props) {
         <div className="graph-body" style={{ flex: 1, minHeight: 0 }}>
           {view === 'authoring' && canEdit ? (
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 18px', borderBottom: '1px solid var(--line)', background: '#fff', gap: 10, flexWrap: 'wrap' }}>
+              <div className="authoring-subbar">
                 <div className="kg-view-switch">
                   <button
                     type="button"
                     className={authoringMode === 'wizard' ? 'on' : ''}
                     onClick={() => setAuthoringMode('wizard')}
                   >
-                    <Layers size={12} style={{ marginRight: 4 }} />
+                    <Layers size={12} style={{ marginRight: 5 }} />
                     {isVi ? 'Quy trình 4 bước (D1–D4)' : '4-Step Wizard (D1–D4)'}
                   </button>
                   <button
@@ -376,18 +378,18 @@ export function UnifiedCourseGraph({ role }: Props) {
                       refreshGraph();
                     }}
                   >
-                    {isD5Completed ? <Network size={12} style={{ marginRight: 4 }} /> : <Lock size={12} style={{ marginRight: 4 }} />}
+                    {isD5Completed ? <Network size={12} style={{ marginRight: 5 }} /> : <Lock size={12} style={{ marginRight: 5 }} />}
                     {isVi ? (isD5Completed ? 'Hiệu chỉnh' : 'Hiệu chỉnh (Khóa · Chưa xong D4)') : (isD5Completed ? 'Edit' : 'Edit (Locked)')}
                   </button>
                 </div>
-                <small className="muted-s">
+                <small className="muted-s authoring-subbar-hint">
                   {authoringMode === 'wizard'
                     ? (isVi ? 'Tạo khung môn học, bài học theo buổi học, sinh quan hệ trên toàn bộ đồ thị và xuất bản (D4).' : 'Author outline, session lessons, graph relations, and publish.')
                     : (isVi ? 'Thêm/sửa/xóa node & cạnh và kiểm tra tính hoàn thiện đồ thị.' : 'Add/edit/delete nodes & edges and check graph completeness.')}
                 </small>
               </div>
               {authoringMode === 'wizard' ? (
-                <div className="graph-stage" style={{ overflowY: 'auto', padding: '18px 24px', flex: 1 }}>
+                <div className="graph-stage" style={{ overflowY: 'auto', padding: '18px 20px 32px', flex: 1 }}>
                   <CourseAuthoringWizard
                     courseId={courseId}
                     courseName={courseName}

@@ -670,7 +670,7 @@ export function extractChapterMeta(node: KnowledgeGraphNode): {
     return { key: clean, code, name, sortOrder: num };
   }
 
-  const week = props.default_week ?? props.defaultWeek;
+  const week = props.default_week ?? props.defaultWeek ?? props.week;
   if (typeof week === 'number' && Number.isFinite(week)) {
     const code = `Buổi học ${week}`;
     return { key: `ch${week}`, code, name: titleStr ? `${code}: ${titleStr}` : code, sortOrder: week };

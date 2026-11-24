@@ -57,8 +57,8 @@ export function CourseToolbar({
           <ChevronDown size={12} />
         </label>
         {teacher && (
-          <button className="btn btn-outline" onClick={onCreate}>
-            <Plus size={12} /> {t('createCourse')}
+          <button className="btn btn-primary" onClick={onCreate}>
+            <Plus size={13} /> {t('createCourse')}
           </button>
         )}
       </div>

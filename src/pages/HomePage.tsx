@@ -86,11 +86,13 @@ export const HomePage: React.FC = () => {
             key={slide.id}
             className={`home-slide ${index === currentSlide ? "active" : ""}`}
           >
-            <img
-              src={slide.imageUrl}
-              alt={language === "vi" ? slide.titleVi : slide.titleEn}
-              className="home-slide-image"
-            />
+            {slide.imageUrl && (
+              <img
+                src={slide.imageUrl}
+                alt={language === "vi" ? slide.titleVi : slide.titleEn}
+                className="home-slide-image"
+              />
+            )}
             <div className="home-slide-overlay" />
             <div className="home-slide-content-wrap">
               <div className="home-slide-card">
@@ -184,27 +186,17 @@ export const HomePage: React.FC = () => {
             {coursesList.length === 0 ? (
               <p>{t("recentCoursesEmpty")}</p>
             ) : (
-              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+              <div className="home-list">
                 {coursesList.slice(0, 3).map((course) => (
                   <Link
                     key={course.id}
+                    className="home-list-item"
                     to={isTeacher ? `/teacher/courses/${course.id}/graph` : `/courses/${course.id}/graph`}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      background: "var(--surface-muted, #f8fafc)",
-                      textDecoration: "none",
-                      color: "inherit",
-                      fontSize: 13,
-                    }}
                   >
-                    <span>
+                    <span className="home-list-title">
                       <strong>{course.code}</strong> · {course.title}
                     </span>
-                    <span className="muted-s">
+                    <span className="home-list-meta">
                       {"progress" in course ? `${course.progress}%` : `${course.students} SV`}
                     </span>
                   </Link>
@@ -222,31 +214,21 @@ export const HomePage: React.FC = () => {
             {upcomingActivities.length === 0 ? (
               <p>{t("upcomingEmpty")}</p>
             ) : (
-              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+              <div className="home-list">
                 {upcomingActivities.map((act) => (
                   <Link
                     key={act.id}
+                    className="home-list-item"
                     to={
                       isTeacher
                         ? `/teacher/courses/${act.courseId}/assignments`
                         : `/courses/${act.courseId}/assignments`
                     }
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      background: "var(--surface-muted, #f8fafc)",
-                      textDecoration: "none",
-                      color: "inherit",
-                      fontSize: 13,
-                    }}
                   >
-                    <span>
+                    <span className="home-list-title">
                       <strong>{act.courseCode}</strong> · {act.title}
                     </span>
-                    <span className="muted-s">
+                    <span className="home-list-meta">
                       {new Date(act.dueAt).toLocaleDateString(isVi ? "vi-VN" : "en-US")}
                     </span>
                   </Link>
@@ -264,27 +246,17 @@ export const HomePage: React.FC = () => {
             {weekEvents.length === 0 ? (
               <p>{t("thisWeekText")}</p>
             ) : (
-              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+              <div className="home-list">
                 {weekEvents.map((evt) => (
                   <Link
                     key={evt.id}
                     to="/dashboard"
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      background: "var(--surface-muted, #f8fafc)",
-                      textDecoration: "none",
-                      color: "inherit",
-                      fontSize: 13,
-                    }}
+                    className="home-list-item"
                   >
-                    <span>
+                    <span className="home-list-title">
                       <strong>{evt.courseCode}</strong> · {evt.title}
                     </span>
-                    <span className="muted-s">{evt.date}</span>
+                    <span className="home-list-meta">{evt.date}</span>
                   </Link>
                 ))}
               </div>

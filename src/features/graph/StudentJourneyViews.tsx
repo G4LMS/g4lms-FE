@@ -60,7 +60,7 @@ function groupKeyOf(node: KnowledgeGraphNode): { key: string; label: string; sor
       sortOrder: num,
     };
   }
-  const week = props.default_week ?? props.defaultWeek;
+  const week = props.default_week ?? props.defaultWeek ?? props.week;
   if (typeof week === 'number' && Number.isFinite(week)) {
     return { key: `ch-ch${week}`, label: `Buổi học ${week}`, sortOrder: week };
   }

@@ -555,7 +555,7 @@ export function KnowledgeGraphCanvas({
         .attr('markerWidth', 9)
         .attr('markerHeight', 9)
         .attr('markerUnits', 'userSpaceOnUse')
-        .attr('orient', 'auto-start-reverse')
+        .attr('orient', 'auto')
         .append('path')
         .attr('d', 'M0,-4L10,0L0,4Z')
         .attr('fill', EDGE_STYLES[type].color);
@@ -710,7 +710,7 @@ export function KnowledgeGraphCanvas({
       .attr('stroke', (d) => edgeStyleOf(d.data.type).color)
       .attr('stroke-width', (d) => edgeStyleOf(d.data.type).w)
       .attr('stroke-dasharray', (d) => edgeStyleOf(d.data.type).dash || null)
-      .attr('marker-start', (d) => (edgeStyleOf(d.data.type).arrow ? `url(#kg-ar-${d.data.type})` : null));
+      .attr('marker-end', (d) => (edgeStyleOf(d.data.type).arrow ? `url(#kg-ar-${d.data.type})` : null));
 
     eAll
       .select<SVGPathElement>('.kg-halo')
@@ -720,7 +720,7 @@ export function KnowledgeGraphCanvas({
     eAll
       .select<SVGTextElement>('.kg-elabel')
       .attr('fill', (d) => edgeStyleOf(d.data.type).color)
-      .text('');
+      .text((d) => (d.data.type === 'MORE' ? '' : d.data.type));
 
     // ---- Nodes join ----
     const nSel = nodeG.selectAll<SVGGElement, SimNode>('g.kg-node').data(simNodes, (d) => d.id);
@@ -1144,7 +1144,6 @@ export function KnowledgeGraphCanvas({
   const [edgeFromId, setEdgeFromId] = useState('');
   const [edgeToId, setEdgeToId] = useState('');
   const [edgeKind, setEdgeKind] = useState<KnowledgeEdgeType>('PREREQUISITE');
-  const [edgeStrength, setEdgeStrength] = useState<'hard' | 'soft'>('hard');
   const [edgeReason, setEdgeReason] = useState('');
   const [edgeSlideId, setEdgeSlideId] = useState('');
   const [edgeQuote, setEdgeQuote] = useState('');
@@ -1229,8 +1228,7 @@ export function KnowledgeGraphCanvas({
     edgeFromId !== edgeToId &&
     Boolean(edgeReason.trim()) &&
     Boolean(edgeSlideId.trim()) &&
-    Boolean(edgeQuote.trim()) &&
-    (edgeKind !== 'PREREQUISITE' || Boolean(edgeStrength));
+    Boolean(edgeQuote.trim());
 
   const submitAddNode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1323,7 +1321,6 @@ export function KnowledgeGraphCanvas({
     setEdgeFromId(defaultFrom);
     setEdgeToId(defaultTo);
     setEdgeKind('PREREQUISITE');
-    setEdgeStrength('hard');
     setEdgeReason('');
     setEdgeSlideId('');
     setEdgeQuote('');
@@ -1342,7 +1339,6 @@ export function KnowledgeGraphCanvas({
     setEdgeFromId(edge.sourceId);
     setEdgeToId(edge.targetId);
     setEdgeKind(edge.type);
-    setEdgeStrength(edge.props.strength === 'soft' ? 'soft' : 'hard');
     setEdgeReason(String(edge.props.reason ?? ''));
     setEdgeSlideId(String(ev?.slide_id ?? ev?.slideId ?? ''));
     setEdgeQuote(String(ev?.quote ?? edge.props.quote ?? ''));
@@ -1390,7 +1386,6 @@ export function KnowledgeGraphCanvas({
                 order_sensitive: false,
                 redundant: false,
                 status: 'approved',
-                strength: edgeStrength,
                 ...(edgeReason.trim() ? { reason: edgeReason.trim() } : {}),
                 ...(edgeQuote.trim() || edgeSlideId.trim()
                   ? {
@@ -2452,12 +2447,6 @@ export function KnowledgeGraphCanvas({
                         <td>{String(selectedEdge.props.status)}</td>
                       </tr>
                     )}
-                    {Boolean(selectedEdge.props.strength) && (
-                      <tr>
-                        <td>độ mạnh</td>
-                        <td>Bắt buộc</td>
-                      </tr>
-                    )}
                     {Boolean(selectedEdge.props.reason) && (
                       <tr>
                         <td>lý do</td>
@@ -2944,7 +2933,7 @@ export function KnowledgeGraphCanvas({
               </select>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: edgeKind === 'PREREQUISITE' ? '1fr 1fr' : '1fr', gap: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
                 Loại quan hệ
                 <select
@@ -2960,19 +2949,6 @@ export function KnowledgeGraphCanvas({
                   <option value="EXPLAIN">EXPLAIN (Giải thích)</option>
                 </select>
               </label>
-              {edgeKind === 'PREREQUISITE' && (
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
-                  Mức độ tiên quyết
-                  <select
-                    value={edgeStrength}
-                    onChange={(e) => setEdgeStrength(e.target.value as 'hard' | 'soft')}
-                    style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--line)', fontWeight: 400 }}
-                  >
-                    <option value="hard">Bắt buộc (hard)</option>
-                    <option value="soft">Khuyến nghị (soft)</option>
-                  </select>
-                </label>
-              )}
             </div>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>

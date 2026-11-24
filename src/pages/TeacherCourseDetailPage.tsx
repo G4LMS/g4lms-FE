@@ -60,7 +60,7 @@ export default function TeacherCourseDetailPage() {
   const [gradeError, setGradeError] = useState('');
   const [savingGrade, setSavingGrade] = useState(false);
 
-  const defaultWeights = { midterm: 30, project: 25, final: 35, attendance: 10 };
+  const defaultWeights = { midterm: 25, project: 20, final: 45, attendance: 10 };
   const [weights, setWeights] = useState(() => {
     try {
       const raw = localStorage.getItem(`g4lms.gradeWeights.${courseId}`);
@@ -79,7 +79,7 @@ export default function TeacherCourseDetailPage() {
       (row.midterm * weights.midterm +
         row.project * weights.project +
         row.final * weights.final +
-        (row.attendance / 10) * weights.attendance) /
+        row.attendance * weights.attendance) /
       100
     ).toFixed(1));
   };
@@ -727,14 +727,14 @@ export default function TeacherCourseDetailPage() {
                             <input
                               type="number"
                               min="0"
-                              max="100"
-                              step="1"
+                              max="10"
+                              step="0.1"
                               style={{ width: 72 }}
                               value={gradeDraft.attendance}
                               onChange={(e) => setGradeDraft((d) => ({ ...d, attendance: e.target.value }))}
                             />
                           ) : (
-                            student.attendance === null ? '—' : `${student.attendance}%`
+                            student.attendance ?? '—'
                           )}
                         </td>
                         <td>

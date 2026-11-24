@@ -10,9 +10,10 @@ interface Props {
   role: 'student' | 'teacher';
   activeItemId?: string;
   topOffset?: number;
+  inline?: boolean;
 }
 
-export function CourseIndexSidebar({ courseId, role, activeItemId, topOffset = 62 }: Props) {
+export function CourseIndexSidebar({ courseId, role, activeItemId, topOffset = 68, inline = false }: Props) {
   const navigate = useNavigate();
   const { language } = useLanguage();
   const isVi = language === 'vi';
@@ -45,26 +46,11 @@ export function CourseIndexSidebar({ courseId, role, activeItemId, topOffset = 6
       {!open && (
         <button
           type="button"
+          className={`course-index-trigger${inline ? ' inline' : ''}`}
           onClick={() => setOpen(true)}
           aria-label={isVi ? 'Mở mục lục khóa học' : 'Open course index'}
           title={isVi ? 'Mục lục khóa học' : 'Course index'}
-          style={{
-            position: 'fixed',
-            left: 14,
-            top: topOffset,
-            zIndex: 30,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '7px 12px',
-            borderRadius: 999,
-            border: '1px solid var(--line)',
-            background: '#fff',
-            color: 'var(--ink)',
-            fontWeight: 600,
-            fontSize: 12,
-            boxShadow: '0 4px 14px rgba(15, 23, 42, 0.08)',
-          }}
+          style={inline ? undefined : { top: topOffset }}
         >
           <List size={15} color="var(--primary)" />
           <span>{isVi ? 'Mục lục' : 'Index'}</span>
@@ -79,8 +65,9 @@ export function CourseIndexSidebar({ courseId, role, activeItemId, topOffset = 6
             style={{
               position: 'fixed',
               inset: 0,
-              top: 44,
-              background: 'rgba(15, 23, 42, 0.25)',
+              top: 52,
+              background: 'rgba(15, 23, 42, 0.28)',
+              backdropFilter: 'blur(2px)',
               zIndex: 35,
             }}
           />
@@ -89,13 +76,13 @@ export function CourseIndexSidebar({ courseId, role, activeItemId, topOffset = 6
             style={{
               position: 'fixed',
               left: 0,
-              top: 44,
+              top: 52,
               bottom: 0,
-              width: 290,
+              width: 300,
               maxWidth: '88vw',
               background: '#fff',
               borderRight: '1px solid var(--line)',
-              boxShadow: '6px 0 24px rgba(15, 23, 42, 0.12)',
+              boxShadow: '6px 0 24px rgba(15, 23, 42, 0.14)',
               zIndex: 40,
               display: 'flex',
               flexDirection: 'column',

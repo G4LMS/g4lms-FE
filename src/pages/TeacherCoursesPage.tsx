@@ -170,9 +170,10 @@ export default function TeacherCoursesPage() {
               theme={c.theme}
               faculty={c.faculty}
               title={c.title}
+              badge={c.published ? (isVi ? 'Đã xuất bản' : 'Published') : t('draft')}
               to={`/teacher/courses/${c.id}/graph`}
               footer={
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 6, flexWrap: 'wrap' }}>
                   <span className="node-count">
                     {c.nodesWithContent}/{c.totalNodes} {isVi ? 'node có nội dung' : 'nodes with content'}
                   </span>
@@ -216,11 +217,17 @@ export default function TeacherCoursesPage() {
                 {c.pending ? <b className="pending">{c.pending} {isVi ? 'chờ duyệt' : 'pending'}</b> : null}
                 {!c.published && <span className="unpub">{t('draft')}</span>}
               </div>
-              {c.description && <p className="muted-s" style={{ margin: '4px 0' }}>{c.description}</p>}
+              {c.description && <p className="muted-s" style={{ margin: '2px 0' }}>{c.description}</p>}
               <ProgressBar value={c.totalNodes ? (c.nodesWithContent / c.totalNodes) * 100 : 0} />
             </CourseCardShell>
           ))}
         </div>
+        {!loading && !error && list.length === 0 && (
+          <div className="course-empty-state">
+            <b>{isVi ? 'Không có khóa học phù hợp' : 'No matching courses'}</b>
+            <span>{isVi ? 'Thử thay đổi bộ lọc hoặc bấm "Tạo khóa học" để bắt đầu.' : 'Adjust filters or create a new course.'}</span>
+          </div>
+        )}
       </main>
       {modalOpen && (
         <div className="course-modal-backdrop" role="presentation" onMouseDown={() => setModalOpen(false)}>

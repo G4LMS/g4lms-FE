@@ -324,6 +324,7 @@ export type QuizStatus = 'draft' | 'published' | 'closed';
 export interface Quiz {
   id: string;
   courseId: string;
+  conceptId?: string | null;
   title: string;
   description: string;
   timeLimitMinutes: number;
@@ -342,6 +343,7 @@ export interface CreateQuizInput {
   description: string;
   timeLimitMinutes: number;
   attemptsAllowed: number;
+  conceptId?: string;
   questions: CreateQuizQuestionInput[];
 }
 
@@ -603,6 +605,14 @@ export interface NodeDetail {
   mastery: number;
   lo: string;
   prerequisites: { title: string; state: string; done: boolean }[];
+  contents?: Array<{
+    id: string;
+    title: string;
+    role: string;
+    bodyText?: string | null;
+    url?: string | null;
+  }>;
+  quizIds?: string[];
   aiHint?: string;
   cta: string;
 }
@@ -684,8 +694,11 @@ export interface HeatSpot {
 export interface ContentItem {
   id: string;
   kind: 'Definition' | 'Example';
+  role?: 'definition' | 'example';
   status: 'approved' | 'draft';
   title: string;
+  bodyText?: string;
+  url?: string | null;
   source: string;
 }
 
@@ -693,8 +706,12 @@ export interface QuestionItem {
   id: string;
   text: string;
   bloom: string;
+  bloomLevel?: number;
   difficulty: string;
   status: 'approved' | 'draft';
+  options?: unknown;
+  correctAnswer?: unknown;
+  explanation?: string;
 }
 
 export interface NodeEditorData {
@@ -757,6 +774,18 @@ export interface OutlineChapter {
   state: ChapterWorkflowState;
   revision: number;
   documentCount?: number;
+  sessionLabel?: string;
+  weekNumber?: number;
+  topics?: Array<{ chapter_id: string; title: string }>;
+  references?: string[];
+  draftPhase?: 'nodes' | 'nodes_reviewed' | 'relations' | 'ready' | null;
+  needsRebase?: boolean;
+  conceptCount?: number;
+  relationCount?: number;
+  relationApprovedCount?: number;
+  relationPendingCount?: number;
+  relationWarnCount?: number;
+  publishedMasterVersion?: number | null;
 }
 
 export interface OutlineLearningOutcome {
@@ -780,14 +809,30 @@ export interface OutlineDraftResponse {
   outline: CourseOutlineData;
   state: OutlineState;
   revision: number;
+  masterVersion?: number;
+  publishedWeekCount?: number;
+  activeJob?: (WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }) | null;
+}
+
+export interface WorkflowJobStage {
+  id?: string;
+  label: string;
+  done: number;
+  total?: number | null;
+  unit?: string;
 }
 
 export interface WorkflowJobResponse {
   jobId?: string;
   status: WorkflowJobStatus;
   progress: number;
+  weekId?: string | null;
+  stageLabel?: string | null;
+  elapsedSeconds?: number | null;
+  stages?: WorkflowJobStage[];
   result?: {
     revision?: number;
+    weekId?: string | null;
     [key: string]: unknown;
   };
   error?: string;
@@ -854,7 +899,6 @@ export interface CourseRelationItem {
   sourceRef: string;
   reason?: string;
   requiredKnowledge?: string;
-  strength?: 'hard' | 'soft' | null;
   confidence?: number;
   evidence?: GraphCitation[];
   assessment?: EdgeAssessmentFinding;
@@ -862,6 +906,17 @@ export interface CourseRelationItem {
   hasWarning?: boolean;
   decision: ReviewDecision;
   reviewNote?: string;
+  sourceCanonicalId?: string;
+  targetCanonicalId?: string;
+}
+
+export interface RelationEndpointOption {
+  id: string;
+  name: string;
+  inDraft: boolean;
+  level?: 'topic' | 'lesson';
+  canonicalId?: string;
+  weekId?: string;
 }
 
 export interface SourceReadinessResponse {
@@ -901,4 +956,13 @@ export interface PublishCourseResponse {
   masterVersion: number;
   warnings: string[];
   publicationId?: string;
+}
+
+export interface PublicationStatusResponse {
+  publicationId: string;
+  releaseNo: number;
+  releaseStatus: string;
+  syncStatus: 'PENDING' | 'SYNCED' | 'FAILED' | 'BLOCKED';
+  canRecover: boolean;
+  error?: string | null;
 }
