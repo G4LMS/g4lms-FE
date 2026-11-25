@@ -9,7 +9,7 @@ import type {
   NotificationRecord, OutlineDraftResponse, PdfFile, ProfileDetails, ProfileRecord, PublishCourseResponse, QueueSummary, Quiz, QuizAttempt, ReviewDecision, Role, StudentAttendanceData,
   StudentCourse, StudentGradeItem, StudentGraph, StudentLearningProfile, SubmitAssignmentInput, SubmitQuizInput, TeacherCourse,
   TeacherCourseTopic, TeacherGradeRow, TeacherGraphData, UpdateAnnouncementInput, UpdateAssignmentInput, UpdateAttendanceSessionInput, UpdateGradebookRowInput, UpdateTeacherCourseInput, User, WorkflowJobResponse,
-  AdaptiveCourseSettings, CourseUsageSummary, SourceReadinessResponse,
+  AdaptiveCourseSettings, CourseUsageSummary, SourceReadinessResponse, CourseOnboardingConfig, StudentOnboardingResult, MasterGraphBridge,
 } from '../types';
 
 import { mockApi } from '../../mockdata/service';
@@ -188,6 +188,13 @@ export const api = {
     initialPassword: string;
   }): Promise<AdminUser> =>
     USE_MOCK_API ? mockApi.createAdminUser(input) : request('/admin/users', json('POST', input)),
+  updateAdminUser: (
+    userId: string,
+    input: { fullName?: string; email?: string; role?: Role; active?: boolean },
+  ): Promise<AdminUser> =>
+    USE_MOCK_API
+      ? mockApi.updateAdminUser(userId, input)
+      : request(`/admin/users/${encodeURIComponent(userId)}`, json('PATCH', input)),
   resetAdminUserPassword: (userId: string, temporaryPassword: string): Promise<void> =>
     USE_MOCK_API
       ? mockApi.resetAdminUserPassword(userId)
@@ -656,6 +663,8 @@ export const api = {
       description?: string;
       contents?: NodeEditorData['contents'];
       questions?: NodeEditorData['questions'];
+      passThreshold?: number;
+      unlockRule?: NodeEditorData['unlockRule'];
     },
   ): Promise<NodeEditorData> => {
     if (USE_MOCK_API) {
@@ -947,6 +956,49 @@ export const api = {
       () => mockApi.saveAdaptiveSettings(courseId, settings),
       `/teacher/courses/${encodeURIComponent(courseId)}/adaptive-settings`,
       json('PUT', settings),
+    ),
+  getCourseOnboardingConfig: (courseId: string): Promise<CourseOnboardingConfig> =>
+    invoke(
+      () => mockApi.getCourseOnboardingConfig(courseId),
+      `/courses/${encodeURIComponent(courseId)}/onboarding-config`,
+    ),
+  saveCourseOnboardingConfig: (courseId: string, config: CourseOnboardingConfig): Promise<CourseOnboardingConfig> =>
+    invoke(
+      () => mockApi.saveCourseOnboardingConfig(courseId, config),
+      `/teacher/courses/${encodeURIComponent(courseId)}/onboarding-config`,
+      json('PUT', config),
+    ),
+  getStudentOnboardingResult: (courseId: string): Promise<StudentOnboardingResult> =>
+    invoke(
+      () => mockApi.getStudentOnboardingResult(courseId),
+      `/student/courses/${encodeURIComponent(courseId)}/onboarding`,
+    ),
+  submitStudentOnboarding: (
+    courseId: string,
+    input: {
+      survey?: StudentOnboardingResult['survey'];
+      diagnosticAnswers: Record<string, number>;
+    },
+  ): Promise<StudentOnboardingResult> =>
+    invoke(
+      () => mockApi.submitStudentOnboarding(courseId, input),
+      `/student/courses/${encodeURIComponent(courseId)}/onboarding`,
+      json('POST', input),
+    ),
+  proposeMasterGraphBridges: (courseId: string): Promise<{ bridges: MasterGraphBridge[] }> =>
+    invoke(
+      () => mockApi.proposeMasterGraphBridges(courseId),
+      `/teacher/courses/${encodeURIComponent(courseId)}/master-graph/bridges/propose`,
+      json('POST', {}),
+    ),
+  integrateMasterGraph: (
+    courseId: string,
+    bridges: MasterGraphBridge[],
+  ): Promise<{ integratedCount: number; masterVersion: number; warnings: string[] }> =>
+    invoke(
+      () => mockApi.integrateMasterGraph(courseId, bridges),
+      `/teacher/courses/${encodeURIComponent(courseId)}/master-graph/integrate`,
+      json('POST', { bridges }),
     ),
 
 };

@@ -683,10 +683,13 @@ export interface HeatSpot {
 
 export interface ContentItem {
   id: string;
-  kind: 'Definition' | 'Example';
+  kind: 'Definition' | 'Example' | 'Video' | 'Document';
   status: 'approved' | 'draft';
   title: string;
   source: string;
+  mediaUrl?: string;
+  durationMin?: number;
+  body?: string;
 }
 
 export interface QuestionItem {
@@ -695,6 +698,10 @@ export interface QuestionItem {
   bloom: string;
   difficulty: string;
   status: 'approved' | 'draft';
+  mode?: 'quiz' | 'practice';
+  options?: string[];
+  correctIndex?: number;
+  explanation?: string;
 }
 
 export interface NodeEditorData {
@@ -708,6 +715,8 @@ export interface NodeEditorData {
   contents: ContentItem[];
   questions: QuestionItem[];
   prerequisites: string[];
+  passThreshold?: number;
+  unlockRule?: 'pass_quiz' | 'view_and_pass' | 'open';
 }
 
 export type KnowledgeNodeType = 'Course' | 'LO' | 'Concept' | 'Assignment' | 'Item' | 'Content' | string;
@@ -901,4 +910,50 @@ export interface PublishCourseResponse {
   masterVersion: number;
   warnings: string[];
   publicationId?: string;
+}
+
+export interface DiagnosticQuestion {
+  id: string;
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+  conceptTag?: string;
+}
+
+export interface CourseOnboardingConfig {
+  surveyEnabled: boolean;
+  surveyTitle: string;
+  collectBackground: boolean;
+  collectGoal: boolean;
+  collectWeeklyHours: boolean;
+  diagnosticEnabled: boolean;
+  diagnosticPassScore: number;
+  diagnosticQuestions: DiagnosticQuestion[];
+}
+
+export interface StudentOnboardingResult {
+  completed: boolean;
+  completedAt?: string;
+  survey?: {
+    backgroundLevel: string;
+    learningGoal: string;
+    weeklyHours: number;
+  };
+  diagnosticScore?: number;
+  diagnosticPassed?: boolean;
+  transcriptGpa?: number;
+  summary?: string;
+}
+
+export interface MasterGraphBridge {
+  id: string;
+  sourceCourseId: string;
+  sourceCourseCode: string;
+  sourceLoCode: string;
+  targetCourseId: string;
+  targetCourseCode: string;
+  targetLoCode: string;
+  relationType: 'PREREQUISITE' | 'RELATED_TO';
+  reason: string;
+  decision: 'PENDING' | 'APPROVE' | 'REJECT';
 }

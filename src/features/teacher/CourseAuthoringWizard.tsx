@@ -39,6 +39,7 @@ import type {
   KnowledgeEdgeType,
   KnowledgeGraphData,
   KnowledgeNodeType,
+  MasterGraphBridge,
   OutlineState,
   ReviewDecision,
   SourceReadinessResponse,
@@ -143,6 +144,8 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
   const [masterVersion, setMasterVersion] = useState(0);
   const [pendingPublicationId, setPendingPublicationId] = useState<string | null>(null);
   const [publishWarnings, setPublishWarnings] = useState<string[]>([]);
+  const [masterBridges, setMasterBridges] = useState<MasterGraphBridge[]>([]);
+  const [masterBusy, setMasterBusy] = useState(false);
 
   // D5 Active Job state
   const [activeJob, setActiveJob] = useState<(WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }) | null>(null);
@@ -1704,6 +1707,92 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph 
               )}
             </div>
           </div>
+
+          {isPublished && (
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+              <div className="wizard-card-head" style={{ marginBottom: 10 }}>
+                <div>
+                  <h4 style={{ margin: 0 }}>Tích hợp vào Master Graph liên môn (UC-KG-05)</h4>
+                  <p className="muted-s" style={{ margin: '2px 0 0' }}>
+                    Dùng AI đề xuất cầu nối chuẩn đầu ra giữa học phần này với các học phần khác, rà soát và kiểm tra chu trình trước khi lưu Master Graph.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline sm"
+                  disabled={masterBusy}
+                  onClick={async () => {
+                    setMasterBusy(true);
+                    setError('');
+                    try {
+                      const res = await api.proposeMasterGraphBridges(courseId);
+                      setMasterBridges(res.bridges);
+                      setMessage(`AI đã đề xuất ${res.bridges.length} cầu nối liên môn để rà soát.`);
+                    } catch (reason) {
+                      setError(reason instanceof Error ? reason.message : 'Không thể đề xuất cầu nối liên môn.');
+                    } finally {
+                      setMasterBusy(false);
+                    }
+                  }}
+                >
+                  <Sparkles size={13} /> {masterBusy ? 'Đang phân tích...' : 'Đề xuất cầu nối liên môn (AI)'}
+                </button>
+              </div>
+
+              {masterBridges.length > 0 && (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {masterBridges.map((b) => (
+                    <div key={b.id} className="wizard-review-card" style={{ padding: 12 }}>
+                      <div className="wizard-review-top">
+                        <div>
+                          <b>[{b.sourceCourseCode}] {b.sourceLoCode} ──({b.relationType})→ [{b.targetCourseCode}] {b.targetLoCode}</b>
+                          <p className="muted-s" style={{ margin: '4px 0 0' }}>{b.reason}</p>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <span className="pill-badge muted">{DECISION_BADGE[b.decision].text}</span>
+                          <button
+                            type="button"
+                            className="btn btn-outline sm"
+                            onClick={() => setMasterBridges((prev) => prev.map((x) => (x.id === b.id ? { ...x, decision: 'APPROVE' } : x)))}
+                          >
+                            <Check size={12} /> Chấp nhận
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline sm"
+                            onClick={() => setMasterBridges((prev) => prev.map((x) => (x.id === b.id ? { ...x, decision: 'REJECT' } : x)))}
+                          >
+                            <X size={12} /> Loại bỏ
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary sm"
+                      disabled={masterBusy || masterBridges.some((b) => b.decision === 'PENDING')}
+                      onClick={async () => {
+                        setMasterBusy(true);
+                        setError('');
+                        try {
+                          const res = await api.integrateMasterGraph(courseId, masterBridges);
+                          setMessage(`Đã tích hợp ${res.integratedCount} cầu nối liên môn vào Master Graph v${res.masterVersion}.`);
+                        } catch (reason) {
+                          setError(reason instanceof Error ? reason.message : 'Phát hiện lỗi toàn vẹn liên môn.');
+                        } finally {
+                          setMasterBusy(false);
+                        }
+                      }}
+                    >
+                      <CheckCircle2 size={13} /> Kiểm tra toàn vẹn &amp; Lưu Master Graph
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

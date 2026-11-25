@@ -23,12 +23,18 @@ export default function StudentQuizPage() {
     () => api.getQuiz(courseId, quizId),
     [courseId, quizId],
   );
+  const { data: graphData } = useAsync(
+    () => (courseId ? api.getKnowledgeGraph(courseId).catch(() => null) : Promise.resolve(null)),
+    [courseId],
+  );
   const [attempt, setAttempt] = useState<QuizAttempt | null>(null);
   const [result, setResult] = useState<QuizAttempt | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [remaining, setRemaining] = useState(0);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [unansweredWarning, setUnansweredWarning] = useState(false);
+  const [failCount, setFailCount] = useState(0);
   const autoSubmitted = useRef(false);
 
   useEffect(() => {
@@ -39,12 +45,22 @@ export default function StudentQuizPage() {
     return () => window.clearInterval(timer);
   }, [attempt, result]);
 
-  const submit = async () => {
-    if (!attempt || busy || result) return;
+  const submit = async (force = false) => {
+    if (!attempt || busy || result || !quiz) return;
+    const unanswered = quiz.questions.length - Object.keys(answers).length;
+    if (!force && unanswered > 0) {
+      setUnansweredWarning(true);
+      return;
+    }
+    setUnansweredWarning(false);
     setBusy(true);
     setActionError('');
     try {
       const submitted = await api.submitQuizAttempt(courseId, quizId, attempt.id, { answers, nodeId });
+      const ratio = submitted.totalQuestions > 0 ? (submitted.correctCount ?? 0) / submitted.totalQuestions : 1;
+      if (ratio < 0.7) {
+        setFailCount((c) => c + 1);
+      }
       setResult(submitted);
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : 'Không thể nộp bài kiểm tra.');
@@ -57,7 +73,7 @@ export default function StudentQuizPage() {
     if (remaining === 0 && attempt && Date.now() >= new Date(attempt.expiresAt).getTime()
       && !result && !busy && !autoSubmitted.current) {
       autoSubmitted.current = true;
-      void submit();
+      void submit(true);
     }
   }, [remaining, attempt, result, busy]);
 
@@ -144,9 +160,26 @@ export default function StudentQuizPage() {
                     </fieldset>
                   ))}
                 </div>
+                {unansweredWarning && (
+                  <div className="wizard-banner error" role="alert" style={{ marginTop: 12, justifyContent: 'space-between' }}>
+                    <span>
+                      {isVi
+                        ? `Bạn còn ${quiz.questions.length - Object.keys(answers).length} câu hỏi chưa trả lời. Vẫn muốn nộp bài?`
+                        : `${quiz.questions.length - Object.keys(answers).length} unanswered questions remain. Submit anyway?`}
+                    </span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" className="btn btn-outline sm" onClick={() => setUnansweredWarning(false)}>
+                        {isVi ? 'Làm tiếp' : 'Continue'}
+                      </button>
+                      <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => void submit(true)}>
+                        {isVi ? 'Nộp bài luôn' : 'Submit anyway'}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="quiz-submit-row">
                   <span>{Object.keys(answers).length}/{quiz.questions.length} {isVi ? 'câu đã trả lời' : 'answered'}</span>
-                  <button className="btn btn-primary" onClick={() => void submit()} disabled={busy}>
+                  <button className="btn btn-primary" onClick={() => void submit(false)} disabled={busy}>
                     {isVi ? 'Nộp bài kiểm tra' : 'Submit quiz'}
                   </button>
                 </div>
@@ -164,9 +197,47 @@ export default function StudentQuizPage() {
                     {isVi ? 'Đạt yêu cầu (≥ 70%) — Bài học đã hoàn thành và mở khóa bài tiếp theo!' : 'Passed (≥ 70%) — Next lesson unlocked!'}
                   </p>
                 ) : (
-                  <p style={{ color: '#b45309' }}>
-                    {isVi ? 'Chưa đạt 70% để mở khóa bài học tiếp theo. Bạn có thể ôn lại và làm lại bài.' : 'Score below 70%. Review and try again to unlock the next lesson.'}
-                  </p>
+                  <div style={{ textAlign: 'left', marginTop: 10, padding: 12, borderRadius: 10, background: '#fffbeb', border: '1px solid #fde68a' }}>
+                    <p style={{ color: '#b45309', margin: '0 0 6px', fontWeight: 600 }}>
+                      {isVi ? 'Chưa đạt ngưỡng 70% để mở khóa bài tiếp theo.' : 'Score below 70%.'}
+                    </p>
+                    {failCount <= 1 ? (
+                      <p className="muted-s" style={{ margin: 0 }}>
+                        {isVi
+                          ? 'Gợi ý lần 1: Hãy xem lại tài liệu giải thích thay thế (ví dụ minh họa) hoặc ôn các câu hỏi ở mức Bloom thấp hơn (Nhớ / Hiểu) trước khi làm lại.'
+                          : 'Suggestion: Review alternative explanations or lower Bloom-level practice questions before retaking.'}
+                      </p>
+                    ) : (
+                      <div>
+                        <p className="muted-s" style={{ margin: '0 0 6px', color: '#92400e', fontWeight: 600 }}>
+                          {isVi
+                            ? 'Bổ trợ kiến thức nền (FR06 — Dưới ngưỡng từ lần thứ 2): Hệ thống truy ngược các bài tiên quyết cần củng cố:'
+                            : 'Prerequisite remediation (FR06): Review prerequisite concepts:'}
+                        </p>
+                        {(() => {
+                          const prereqs = nodeId && graphData
+                            ? graphData.edges
+                                .filter((e) => e.type === 'PREREQUISITE' && e.target === nodeId)
+                                .map((e) => graphData.nodes.find((n) => n.id === e.source))
+                                .filter((n): n is NonNullable<typeof n> => Boolean(n))
+                            : [];
+                          return prereqs.length > 0 ? (
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {prereqs.map((p) => (
+                                <Link key={p.id} className="btn btn-outline sm" to={`/courses/${courseId}/learn/${encodeURIComponent(p.id)}`}>
+                                  Ôn nền tảng: {p.name}
+                                </Link>
+                              ))}
+                            </div>
+                          ) : (
+                            <Link className="btn btn-outline sm" to={`/courses/${courseId}/graph`}>
+                              Mở lộ trình để xem bài tiên quyết cần bổ trợ
+                            </Link>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
                 )}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 10 }}>
                   {nodeId && (

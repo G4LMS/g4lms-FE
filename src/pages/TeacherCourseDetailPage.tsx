@@ -1,11 +1,12 @@
-import { Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, FileText, FolderOpen, Plus, Search, SlidersHorizontal, Users } from 'lucide-react';
+import { BarChart3, Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, FileText, FolderOpen, Plus, Search, SlidersHorizontal, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
-import type { CourseSection, RosterStudent, TeacherCourseTopic, TeacherGradeRow } from '../types';
+import { HeatPanel } from '../features/teacher/HeatPanel';
+import type { CourseSection, HeatSpot, RosterStudent, TeacherCourseTopic, TeacherGradeRow } from '../types';
 
 const TABS = [
   ['graph', 'Lộ trình'],
@@ -25,7 +26,7 @@ export default function TeacherCourseDetailPage() {
   const [newSectionTitle, setNewSectionTitle] = useState('');
   const [creatingSection, setCreatingSection] = useState(false);
   const [sectionError, setSectionError] = useState('');
-  const [studentSubTab, setStudentSubTab] = useState<'overview' | 'gradebook' | 'attendance'>(
+  const [studentSubTab, setStudentSubTab] = useState<'overview' | 'gradebook' | 'attendance' | 'analytics'>(
     tab === 'grades' ? 'gradebook' : 'overview',
   );
   const isVi = language === 'vi';
@@ -46,6 +47,8 @@ export default function TeacherCourseDetailPage() {
     useAsync(() => api.getQuizzes(courseId, 'teacher').catch(() => []), [courseId]);
   const { data: filesData } =
     useAsync(() => api.getCourseFiles(courseId).catch(() => []), [courseId]);
+  const { data: heatSpotData } =
+    useAsync<HeatSpot | null>(() => api.getHeatSpot().catch(() => null), [courseId]);
 
   const roster = rosterData ?? [];
   const [gradebook, setGradebook] = useState<TeacherGradeRow[]>([]);
@@ -389,9 +392,17 @@ export default function TeacherCourseDetailPage() {
                   >
                     {isVi ? 'Điểm danh' : 'Attendance'} ({(attendanceData ?? []).length})
                   </button>
+                  <button
+                    type="button"
+                    className={studentSubTab === 'analytics' ? 'on' : ''}
+                    onClick={() => setStudentSubTab('analytics')}
+                  >
+                    <BarChart3 size={13} style={{ marginRight: 4 }} />
+                    {isVi ? 'Phân tích lớp' : 'Class analytics'}
+                  </button>
                 </div>
               </div>
-              {studentSubTab !== 'attendance' && (
+              {studentSubTab !== 'attendance' && studentSubTab !== 'analytics' && (
                 <label>
                   <Search size={14} />
                   <input
@@ -402,6 +413,54 @@ export default function TeacherCourseDetailPage() {
                 </label>
               )}
             </div>
+
+            {studentSubTab === 'analytics' && (() => {
+              const scores = gradebook.map((r) => computeTotal(r)).filter((s): s is number => s !== null);
+              const buckets = [
+                { label: '< 5.0 (Yếu)', count: scores.filter((s) => s < 5).length, color: '#dc2626' },
+                { label: '5.0 – 6.9 (Trung bình)', count: scores.filter((s) => s >= 5 && s < 7).length, color: '#d97706' },
+                { label: '7.0 – 8.4 (Khá)', count: scores.filter((s) => s >= 7 && s < 8.5).length, color: '#0284c7' },
+                { label: '8.5 – 10 (Giỏi)', count: scores.filter((s) => s >= 8.5).length, color: '#15803d' },
+              ];
+              const maxBucket = Math.max(1, ...buckets.map((b) => b.count));
+
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, paddingTop: 14 }}>
+                  <div className="admin-card" style={{ padding: 16 }}>
+                    <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>Phân phối điểm của lớp</h3>
+                    {scores.length === 0 ? (
+                      <p className="muted-s">Chưa có dữ liệu điểm tổng kết để thống kê.</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {buckets.map((b) => (
+                          <div key={b.label}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                              <span>{b.label}</span>
+                              <b>{b.count} SV</b>
+                            </div>
+                            <div style={{ height: 8, borderRadius: 99, background: '#e2e8f0', overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.round((b.count / maxBucket) * 100)}%`, height: '100%', background: b.color }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    {heatSpotData ? (
+                      <HeatPanel
+                        spot={heatSpotData}
+                        onOpenLesson={() => nav(`/teacher/courses/${courseId}/graph`)}
+                      />
+                    ) : (
+                      <div className="admin-card" style={{ padding: 16 }}>
+                        <p className="muted-s">Chưa có thống kê Concept điểm nóng cho lớp này.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {studentSubTab === 'overview' && (() => {
               const totalConcepts = courseId === 'CO3093' ? 28 : 24;

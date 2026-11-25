@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, Edit3, FileText, Sigma, Users } from 'lucide-react';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
+import { StudentOnboardingPanel } from '../features/courses/StudentOnboardingPanel';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
 import type { CourseSection } from '../types';
@@ -63,6 +64,7 @@ export default function StudentCourseDetailPage() {
 
         {tab === 'content' && (
           <div className="course-detail-sections">
+            <StudentOnboardingPanel courseId={courseId} />
             <section className="course-activity-section" aria-labelledby="course-activity-heading">
               <h2 id="course-activity-heading">{isVi ? 'Hoạt động môn học' : 'Course activities'}</h2>
               <div className="course-activity-links">

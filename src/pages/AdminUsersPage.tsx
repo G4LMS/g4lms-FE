@@ -19,6 +19,10 @@ export default function AdminUsersPage() {
   const [busyId, setBusyId] = useState('');
   const [passwordTarget, setPasswordTarget] = useState<AdminUser | null>(null);
   const [temporaryPassword, setTemporaryPassword] = useState('');
+  const [editTarget, setEditTarget] = useState<AdminUser | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editRole, setEditRole] = useState<Role>('student');
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -50,6 +54,61 @@ export default function AdminUsersPage() {
       setTemporaryPassword('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Không thể đặt lại mật khẩu.');
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const startEditUser = (user: AdminUser) => {
+    setPasswordTarget(null);
+    setEditTarget(user);
+    setEditName(user.name);
+    setEditEmail(user.email);
+    setEditRole(user.role);
+    setError('');
+    setActionMessage('');
+  };
+
+  const saveEditUser = async () => {
+    if (!editTarget) return;
+    if (!editName.trim() || !editEmail.trim() || !editEmail.includes('@')) {
+      setError('Vui lòng nhập họ tên và email hợp lệ.');
+      return;
+    }
+    setBusyId(editTarget.id);
+    setError('');
+    setActionMessage('');
+    try {
+      const updated = await api.updateAdminUser(editTarget.id, {
+        fullName: editName.trim(),
+        email: editEmail.trim(),
+        role: editRole,
+      });
+      setUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setActionMessage(`Đã cập nhật thông tin tài khoản ${updated.email}.`);
+      setEditTarget(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Không thể cập nhật tài khoản.');
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const toggleUserActive = async (user: AdminUser) => {
+    if (user.role === 'admin') return;
+    setBusyId(user.id);
+    setError('');
+    setActionMessage('');
+    try {
+      const updated = await api.updateAdminUser(user.id, { active: !user.active });
+      setUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setActionMessage(
+        updated.active
+          ? `Đã kích hoạt lại tài khoản ${updated.email}.`
+          : `Đã khóa tài khoản ${updated.email}.`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Không thể đổi trạng thái tài khoản.');
     } finally {
       setBusyId('');
     }
@@ -93,6 +152,37 @@ export default function AdminUsersPage() {
         </label>
         {error && <p className="form-error" role="alert">{error}</p>}
         {actionMessage && <p className="admin-success" role="status">{actionMessage}</p>}
+        {editTarget && (
+          <section className="dashboard-section admin-form">
+            <h2 className="admin-card-title">Chỉnh sửa tài khoản · {editTarget.email}</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+              <label className="field">
+                <span>Họ tên</span>
+                <input value={editName} onChange={(e) => setEditName(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>Email</span>
+                <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>Vai trò</span>
+                <select
+                  value={editRole}
+                  disabled={editTarget.role === 'admin'}
+                  onChange={(e) => setEditRole(e.target.value as Role)}
+                >
+                  <option value="student">Sinh viên</option>
+                  <option value="teacher">Giảng viên</option>
+                  {editTarget.role === 'admin' && <option value="admin">Quản trị viên</option>}
+                </select>
+              </label>
+            </div>
+            <div className="admin-row-actions" style={{ marginTop: 10 }}>
+              <button className="btn btn-primary sm" type="button" disabled={busyId === editTarget.id} onClick={() => void saveEditUser()}>Lưu thay đổi</button>
+              <button className="btn btn-outline sm" type="button" onClick={() => setEditTarget(null)}>Hủy</button>
+            </div>
+          </section>
+        )}
         {passwordTarget && (
           <section className="dashboard-section admin-form">
             <h2 className="admin-card-title">Đặt lại mật khẩu · {passwordTarget.email}</h2>
@@ -112,16 +202,32 @@ export default function AdminUsersPage() {
             <p className="muted">Không tìm thấy người dùng.</p>
           ) : (
             <table className="admin-table">
-              <thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Ngày tạo</th><th>Thao tác</th></tr></thead>
+              <thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Trạng thái</th><th>Ngày tạo</th><th>Thao tác</th></tr></thead>
               <tbody>
                 {filteredUsers.map((user) => (
                   <tr key={user.id}>
                     <td>{user.name}</td>
                     <td>{user.email}</td>
                     <td><span className={`admin-role ${user.role}`}>{roleLabels[user.role]}</span></td>
+                    <td>
+                      <span className={`pill-badge ${user.active ? 'green' : 'muted'}`}>
+                        {user.active ? 'Hoạt động' : 'Đã khóa'}
+                      </span>
+                    </td>
                     <td>{new Date(user.createdAt).toLocaleDateString('vi-VN')}</td>
                     <td className="admin-row-actions">
-                      <button className="btn btn-outline sm" type="button" disabled={busyId === user.id} onClick={() => { setPasswordTarget(user); setError(''); setActionMessage(''); }}>
+                      <button className="btn btn-outline sm" type="button" disabled={busyId === user.id} onClick={() => startEditUser(user)}>
+                        Sửa
+                      </button>
+                      <button
+                        className="btn btn-outline sm"
+                        type="button"
+                        disabled={busyId === user.id || user.role === 'admin'}
+                        onClick={() => void toggleUserActive(user)}
+                      >
+                        {user.active ? 'Khóa' : 'Kích hoạt'}
+                      </button>
+                      <button className="btn btn-outline sm" type="button" disabled={busyId === user.id} onClick={() => { setEditTarget(null); setPasswordTarget(user); setError(''); setActionMessage(''); }}>
                         Đặt lại mật khẩu
                       </button>
                       <button className="btn btn-danger sm" type="button" disabled={busyId === user.id || user.role === 'admin'} onClick={() => void deleteUser(user)}>
