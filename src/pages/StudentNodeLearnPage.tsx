@@ -136,7 +136,7 @@ export default function StudentNodeLearnPage() {
     const chapterRaw = String(props.chapter_id ?? props.chapterId ?? '').toLowerCase();
     const chNum = chapterRaw.match(/\d+/)?.[0];
     if (chNum) {
-      const byChapter = list.find((q) => q.id.includes(`ch${chNum}`) || q.title.toLowerCase().includes(`buổi học ${chNum}`));
+      const byChapter = list.find((q) => q.id.includes(`ch${chNum}`) || q.title.toLowerCase().includes(`chương ${chNum}`));
       if (byChapter) return byChapter;
     }
     return list[0];
@@ -181,7 +181,7 @@ export default function StudentNodeLearnPage() {
             </span>
           )}
           {defaultWeek != null && (
-            <span className="pill-badge muted">Buổi học {String(defaultWeek)}</span>
+            <span className="pill-badge muted">Chương {String(defaultWeek)}</span>
           )}
         </div>
 

@@ -30,6 +30,7 @@ export default function CourseQuizzesPage() {
   const [description, setDescription] = useState('');
   const [timeLimit, setTimeLimit] = useState('10');
   const [attemptsAllowed, setAttemptsAllowed] = useState('2');
+  const [dueAt, setDueAt] = useState('');
   const [questions, setQuestions] = useState<CreateQuizQuestionInput[]>([emptyQuestion(1)]);
   const [actionError, setActionError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -62,11 +63,13 @@ export default function CourseQuizzesPage() {
         description: description.trim(),
         timeLimitMinutes: Number(timeLimit),
         attemptsAllowed: Number(attemptsAllowed),
+        dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
         questions,
       });
       setQuizzes((current) => [quiz, ...current]);
       setTitle('');
       setDescription('');
+      setDueAt('');
       setQuestions([emptyQuestion(1)]);
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : (isVi ? 'Không thể tạo quiz.' : 'Unable to create quiz.'));
@@ -113,6 +116,7 @@ export default function CourseQuizzesPage() {
             <div className="quiz-author-settings">
               <label>{isVi ? 'Thời gian (phút)' : 'Time limit (minutes)'}<input type="number" min="1" max="300" required value={timeLimit} onChange={(event) => setTimeLimit(event.target.value)} /></label>
               <label>{isVi ? 'Số lần làm tối đa' : 'Allowed attempts'}<input type="number" min="1" max="20" required value={attemptsAllowed} onChange={(event) => setAttemptsAllowed(event.target.value)} /></label>
+              <label>{isVi ? 'Hạn đóng bài (tùy chọn)' : 'Deadline (optional)'}<input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} /></label>
             </div>
 
             <div className="quiz-author-questions">
@@ -158,33 +162,46 @@ export default function CourseQuizzesPage() {
         )}
 
         <section className="quiz-list">
-          {quizzes.map((quiz) => (
-            <article className="quiz-list-card" key={quiz.id}>
-              <div>
-                <span className={`assignment-status ${quiz.status}`}>{isVi
-                  ? { draft: 'Bản nháp', published: 'Đã xuất bản', closed: 'Đã đóng' }[quiz.status]
-                  : quiz.status}</span>
-                <h2>{quiz.title}</h2>
-                {quiz.description && <p>{quiz.description}</p>}
-                <div className="quiz-meta">
-                  <span><Clock3 size={14} />{quiz.timeLimitMinutes} {isVi ? 'phút' : 'minutes'}</span>
-                  <span>{quiz.questions.length} {isVi ? 'câu hỏi' : 'questions'}</span>
-                  <span>{quiz.attemptsUsed}/{quiz.attemptsAllowed} {isVi ? 'lần làm' : 'attempts'}</span>
+          {quizzes.map((quiz) => {
+            const dueMs = quiz.dueAt ? Date.parse(quiz.dueAt) : NaN;
+            const isExpired = Number.isFinite(dueMs) && Date.now() > dueMs;
+            return (
+              <article className="quiz-list-card" key={quiz.id}>
+                <div>
+                  <span className={`assignment-status ${isExpired ? 'closed' : quiz.status}`}>{isExpired
+                    ? (isVi ? 'Đã quá hạn' : 'Expired')
+                    : isVi
+                      ? { draft: 'Bản nháp', published: 'Đã xuất bản', closed: 'Đã đóng' }[quiz.status]
+                      : quiz.status}</span>
+                  <h2>{quiz.title}</h2>
+                  {quiz.description && <p>{quiz.description}</p>}
+                  <div className="quiz-meta">
+                    <span><Clock3 size={14} />{quiz.timeLimitMinutes} {isVi ? 'phút' : 'minutes'}</span>
+                    <span>{quiz.questions.length} {isVi ? 'câu hỏi' : 'questions'}</span>
+                    <span>{quiz.attemptsUsed}/{quiz.attemptsAllowed} {isVi ? 'lần làm' : 'attempts'}</span>
+                    {quiz.dueAt && (
+                      <span>{isVi ? 'Hạn đóng' : 'Due'}: {new Date(quiz.dueAt).toLocaleString(isVi ? 'vi-VN' : 'en-US')}</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              {isTeacher ? (
-                <div className="quiz-list-actions">
-                  {quiz.status === 'draft' && <button className="btn btn-primary" disabled={busy} onClick={() => setStatus(quiz, 'published')}>{isVi ? 'Xuất bản' : 'Publish'}</button>}
-                  {quiz.status === 'published' && <button className="btn btn-outline" disabled={busy} onClick={() => setStatus(quiz, 'closed')}>{isVi ? 'Đóng quiz' : 'Close quiz'}</button>}
-                  {quiz.status === 'closed' && <button className="btn btn-outline" disabled={busy} onClick={() => setStatus(quiz, 'published')}>{isVi ? 'Mở lại' : 'Reopen'}</button>}
-                </div>
-              ) : (
-                <button className="btn btn-primary" onClick={() => navigate(`/courses/${courseId}/quizzes/${quiz.id}`)}>
-                  {isVi ? 'Vào làm bài' : 'Start quiz'}
-                </button>
-              )}
-            </article>
-          ))}
+                {isTeacher ? (
+                  <div className="quiz-list-actions">
+                    {quiz.status === 'draft' && <button className="btn btn-primary" disabled={busy} onClick={() => setStatus(quiz, 'published')}>{isVi ? 'Xuất bản' : 'Publish'}</button>}
+                    {quiz.status === 'published' && <button className="btn btn-outline" disabled={busy} onClick={() => setStatus(quiz, 'closed')}>{isVi ? 'Đóng quiz' : 'Close quiz'}</button>}
+                    {quiz.status === 'closed' && <button className="btn btn-outline" disabled={busy} onClick={() => setStatus(quiz, 'published')}>{isVi ? 'Mở lại' : 'Reopen'}</button>}
+                  </div>
+                ) : (
+                  <button
+                    className="btn btn-primary"
+                    disabled={isExpired}
+                    onClick={() => navigate(`/courses/${courseId}/quizzes/${quiz.id}`)}
+                  >
+                    {isExpired ? (isVi ? 'Đã quá hạn' : 'Expired') : (isVi ? 'Vào làm bài' : 'Start quiz')}
+                  </button>
+                )}
+              </article>
+            );
+          })}
           {!loading && !error && !quizzes.length && <p className="course-empty-section">{isVi ? 'Chưa có quiz nào.' : 'No quizzes yet.'}</p>}
         </section>
       </main>

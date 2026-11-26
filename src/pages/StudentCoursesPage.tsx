@@ -23,7 +23,18 @@ export default function StudentCoursesPage() {
       if (statusFilter === statusOptions[2]) return c.progress >= 100;
       return true;
     })
-    .sort((a, b) => (sortBy === 'progress' ? b.progress - a.progress : a.title.localeCompare(b.title)));
+    .sort((a, b) => {
+      if (sortBy === 'progress') return b.progress - a.progress;
+      if (sortBy === 'time') {
+        const parseDeadline = (d?: string) => {
+          const m = d?.match(/(\d{1,2})\/(\d{1,2})/);
+          return m ? Number(m[2]) * 100 + Number(m[1]) : Number.MAX_SAFE_INTEGER;
+        };
+        const diff = parseDeadline(a.deadline) - parseDeadline(b.deadline);
+        return diff !== 0 ? diff : a.title.localeCompare(b.title);
+      }
+      return a.title.localeCompare(b.title);
+    });
 
   return (
     <div className="page">

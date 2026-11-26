@@ -129,6 +129,7 @@ export interface CourseResource {
   nameEn: string;
   kind: 'pdf' | 'slides' | 'video' | 'quiz';
   url?: string;
+  durationSeconds?: number;
 }
 
 export interface CourseSection {
@@ -202,6 +203,8 @@ export interface Assignment {
   score?: number | null;
   feedback?: string | null;
   submissionText?: string;
+  attachmentName?: string;
+  attachmentUrl?: string;
   submissionCount?: number;
   gradedCount?: number;
 }
@@ -211,6 +214,8 @@ export interface AssignmentSubmissionRecord {
   studentId: string;
   studentName: string;
   text: string;
+  attachmentName?: string;
+  attachmentUrl?: string;
   submittedAt: string;
   status: SubmissionStatus;
   score: number | null;
@@ -305,6 +310,9 @@ export interface UpdateAssignmentInput {
 
 export interface SubmitAssignmentInput {
   text: string;
+  file?: File | null;
+  attachmentName?: string;
+  attachmentUrl?: string;
 }
 
 
@@ -329,6 +337,7 @@ export interface Quiz {
   timeLimitMinutes: number;
   attemptsAllowed: number;
   attemptsUsed: number;
+  dueAt?: string;
   status: QuizStatus;
   questions: QuizQuestion[];
 }
@@ -342,6 +351,7 @@ export interface CreateQuizInput {
   description: string;
   timeLimitMinutes: number;
   attemptsAllowed: number;
+  dueAt?: string;
   questions: CreateQuizQuestionInput[];
 }
 

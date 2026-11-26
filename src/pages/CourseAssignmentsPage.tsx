@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ClipboardList, Clock3, Send } from 'lucide-react';
+import { ClipboardList, Clock3, FileText, Paperclip, Send, X } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
@@ -39,6 +39,7 @@ export default function CourseAssignmentsPage() {
   const [dueAt, setDueAt] = useState('');
   const [maxScore, setMaxScore] = useState('10');
   const [submissionText, setSubmissionText] = useState<Record<string, string>>({});
+  const [submissionFiles, setSubmissionFiles] = useState<Record<string, File | null>>({});
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -182,16 +183,18 @@ export default function CourseAssignmentsPage() {
 
   const submit = async (assignment: Assignment) => {
     const text = (submissionText[assignment.id] ?? assignment.submissionText ?? '').trim();
-    if (!text) {
-      setActionError(isVi ? 'Vui lòng nhập nội dung bài nộp.' : 'Enter your submission before sending.');
+    const file = submissionFiles[assignment.id] ?? null;
+    if (!text && !file) {
+      setActionError(isVi ? 'Vui lòng nhập nội dung hoặc đính kèm tệp bài nộp.' : 'Enter your submission or attach a file before sending.');
       return;
     }
     setBusy(true);
     setActionError('');
     setActionMessage('');
     try {
-      const updated = await api.submitAssignment(courseId, assignment.id, { text });
+      const updated = await api.submitAssignment(courseId, assignment.id, { text, file });
       setAssignments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setSubmissionFiles((current) => ({ ...current, [assignment.id]: null }));
       setActionMessage(isVi ? 'Đã nộp bài thành công.' : 'Submission sent.');
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : 'Không thể nộp bài.');
@@ -258,7 +261,9 @@ export default function CourseAssignmentsPage() {
           {assignments.map((assignment) => {
             const isGraded = assignment.submissionStatus === 'graded';
             const isSubmitted = assignment.submissionStatus === 'submitted' || assignment.submissionStatus === 'late' || isGraded;
-            const canSubmit = !isTeacher && assignment.status === 'published' && !isGraded;
+            const dueMs = Date.parse(assignment.dueAt);
+            const isExpired = Number.isFinite(dueMs) && Date.now() > dueMs;
+            const canSubmit = !isTeacher && assignment.status === 'published' && !isGraded && !isExpired;
             const submissions = submissionsByAssignment[assignment.id] ?? [];
             const isExpanded = expandedAssignmentId === assignment.id;
 
@@ -266,10 +271,12 @@ export default function CourseAssignmentsPage() {
               <article className="assignment-card" key={assignment.id}>
                 <div className="assignment-card-head">
                   <div>
-                    <span className={`assignment-status ${assignment.status}`}>
+                    <span className={`assignment-status ${!isTeacher && isExpired && !isGraded ? 'closed' : assignment.status}`}>
                       {isTeacher
                         ? (isVi ? { draft: 'Bản nháp', published: 'Đã giao', closed: 'Đã đóng' }[assignment.status] : assignment.status)
-                        : (isVi ? { not_submitted: 'Chưa nộp', submitted: 'Đã nộp', graded: 'Đã chấm', late: 'Nộp trễ' }[assignment.submissionStatus ?? 'not_submitted'] : assignment.submissionStatus ?? 'not_submitted')}
+                        : isExpired && !isGraded
+                          ? (isVi ? 'Đã quá hạn' : 'Expired')
+                          : (isVi ? { not_submitted: 'Chưa nộp', submitted: 'Đã nộp', graded: 'Đã chấm', late: 'Nộp trễ' }[assignment.submissionStatus ?? 'not_submitted'] : assignment.submissionStatus ?? 'not_submitted')}
                     </span>
                     <h2>{assignment.title}</h2>
                   </div>
@@ -342,6 +349,17 @@ export default function CourseAssignmentsPage() {
                                     </span>
                                   </div>
                                   <p style={{ whiteSpace: 'pre-wrap', margin: '6px 0 10px' }}>{sub.text}</p>
+                                  {sub.attachmentName && (
+                                    <div style={{ marginBottom: 10 }}>
+                                      {sub.attachmentUrl ? (
+                                        <a href={sub.attachmentUrl} target="_blank" rel="noreferrer" className="btn btn-outline sm">
+                                          <FileText size={14} /> {sub.attachmentName}
+                                        </a>
+                                      ) : (
+                                        <span className="pill-badge muted"><FileText size={13} /> {sub.attachmentName}</span>
+                                      )}
+                                    </div>
+                                  )}
                                   <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: 8, alignItems: 'center' }}>
                                     <input
                                       type="number"
@@ -392,11 +410,27 @@ export default function CourseAssignmentsPage() {
                         {assignment.feedback && <p>{assignment.feedback}</p>}
                       </div>
                     )}
-                    {isSubmitted && assignment.submissionText && (
+                    {isSubmitted && (assignment.submissionText || assignment.attachmentName) && (
                       <div className="assignment-feedback" style={{ marginTop: 8 }}>
                         <strong>{isVi ? 'Bài đã nộp' : 'Your submission'}:</strong>
-                        <p style={{ whiteSpace: 'pre-wrap' }}>{assignment.submissionText}</p>
+                        {assignment.submissionText && <p style={{ whiteSpace: 'pre-wrap' }}>{assignment.submissionText}</p>}
+                        {assignment.attachmentName && (
+                          <div style={{ marginTop: 6 }}>
+                            {assignment.attachmentUrl ? (
+                              <a href={assignment.attachmentUrl} target="_blank" rel="noreferrer" className="btn btn-outline sm">
+                                <FileText size={14} /> {assignment.attachmentName}
+                              </a>
+                            ) : (
+                              <span className="pill-badge muted"><FileText size={13} /> {assignment.attachmentName}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
+                    )}
+                    {!isTeacher && assignment.status === 'published' && !isGraded && isExpired && (
+                      <p className="muted" style={{ marginTop: 8, color: '#b91c1c', fontWeight: 500 }}>
+                        {isVi ? 'Đã quá hạn nộp bài. Chức năng nộp/cập nhật bài đã bị khóa.' : 'This assignment has passed its deadline. Submissions are locked.'}
+                      </p>
                     )}
                     {canSubmit && (
                       <div className="assignment-submit">
@@ -406,9 +440,39 @@ export default function CourseAssignmentsPage() {
                             rows={3}
                             value={submissionText[assignment.id] ?? assignment.submissionText ?? ''}
                             onChange={(event) => setSubmissionText((current) => ({ ...current, [assignment.id]: event.target.value }))}
-                            placeholder={isVi ? 'Nhập câu trả lời hoặc liên kết bài làm...' : 'Enter your answer or a link to your work...'}
+                            placeholder={isVi ? 'Nhập câu trả lời, ghi chú hoặc liên kết bài làm...' : 'Enter your answer, notes, or a link to your work...'}
                           />
                         </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                          <label className="btn btn-outline sm" style={{ cursor: 'pointer', margin: 0 }}>
+                            <Paperclip size={14} />
+                            {isVi ? 'Đính kèm tệp (PDF, Word, Excel, PPT, ZIP)' : 'Attach file (PDF, Word, Excel, PPT, ZIP)'}
+                            <input
+                              type="file"
+                              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip"
+                              style={{ display: 'none' }}
+                              onChange={(event) => {
+                                const file = event.target.files?.[0] ?? null;
+                                setSubmissionFiles((current) => ({ ...current, [assignment.id]: file }));
+                                event.target.value = '';
+                              }}
+                            />
+                          </label>
+                          {submissionFiles[assignment.id] && (
+                            <span className="pill-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              <FileText size={13} />
+                              {submissionFiles[assignment.id]!.name}
+                              <button
+                                type="button"
+                                className="icon-plain"
+                                aria-label={isVi ? 'Bỏ tệp đính kèm' : 'Remove attachment'}
+                                onClick={() => setSubmissionFiles((current) => ({ ...current, [assignment.id]: null }))}
+                              >
+                                <X size={13} />
+                              </button>
+                            </span>
+                          )}
+                        </div>
                         <button className="btn btn-primary" disabled={busy} onClick={() => void submit(assignment)}>
                           <Send size={14} />{isSubmitted ? (isVi ? 'Nộp lại' : 'Resubmit') : (isVi ? 'Nộp bài' : 'Submit')}
                         </button>

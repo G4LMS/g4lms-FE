@@ -148,7 +148,7 @@ export default function CourseFilesPage() {
                 <strong>{file.name}</strong>
                 <span>{file.mimeType} · {formatBytes(file.sizeBytes)} · {new Date(file.uploadedAt).toLocaleDateString(isVi ? 'vi-VN' : 'en-US')}</span>
               </div>
-              {file.downloadUrl && <a className="btn btn-outline sm" href={file.downloadUrl}>{isVi ? 'Tải xuống' : 'Download'}</a>}
+              {file.downloadUrl && <a className="btn btn-outline sm" href={file.downloadUrl} target="_blank" rel="noreferrer">{isVi ? 'Mở / Tải xuống' : 'Open / Download'}</a>}
             </article>
           ))}
         </section>

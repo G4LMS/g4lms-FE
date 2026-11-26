@@ -1,8 +1,9 @@
-import { BarChart3, Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, FileText, FolderOpen, Plus, Search, SlidersHorizontal, Users } from 'lucide-react';
+import { BarChart3, Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, FileText, FolderOpen, PlayCircle, Plus, Search, SlidersHorizontal, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
+import { MockVideoModal } from '../features/courses/MockVideoModal';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
 import { HeatPanel } from '../features/teacher/HeatPanel';
@@ -22,6 +23,7 @@ export default function TeacherCourseDetailPage() {
   const [progressFilter, setProgressFilter] = useState<'all' | 'good' | 'mid' | 'low'>('all');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ materials: true, overview: true, ch1: true });
   const [sections, setSections] = useState<CourseSection[]>([]);
+  const [previewVideo, setPreviewVideo] = useState<{ title: string; sectionTitle: string; durationSeconds?: number } | null>(null);
   const [addingSection, setAddingSection] = useState(false);
   const [newSectionTitle, setNewSectionTitle] = useState('');
   const [creatingSection, setCreatingSection] = useState(false);
@@ -204,7 +206,7 @@ export default function TeacherCourseDetailPage() {
                 className="btn btn-primary sm"
                 onClick={() => setAddingSection((v) => !v)}
               >
-                <Plus size={13} /> {isVi ? 'Thêm buổi học / khung mới' : 'Add session / section'}
+                <Plus size={13} /> {isVi ? 'Thêm chương / khung mới' : 'Add session / section'}
               </button>
               <button type="button" className="course-collapse-all" onClick={() => setOpenSections({})}>
                 {isVi ? 'Thu gọn toàn bộ' : 'Collapse all'}
@@ -217,7 +219,7 @@ export default function TeacherCourseDetailPage() {
                   type="text"
                   value={newSectionTitle}
                   onChange={(e) => setNewSectionTitle(e.target.value)}
-                  placeholder={isVi ? 'Ví dụ: Buổi học 6: Thuật toán nâng cao...' : 'e.g. Session 6: Advanced Algorithms...'}
+                  placeholder={isVi ? 'Ví dụ: Chương 6: Thuật toán nâng cao...' : 'e.g. Session 6: Advanced Algorithms...'}
                   style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
                 />
                 <button
@@ -236,7 +238,7 @@ export default function TeacherCourseDetailPage() {
                       setNewSectionTitle('');
                       setAddingSection(false);
                     } catch (reason) {
-                      setSectionError(reason instanceof Error ? reason.message : 'Không thể tạo buổi học mới.');
+                      setSectionError(reason instanceof Error ? reason.message : 'Không thể tạo chương mới.');
                     } finally {
                       setCreatingSection(false);
                     }
@@ -251,7 +253,7 @@ export default function TeacherCourseDetailPage() {
             )}
             {sectionError && <p className="form-error" role="alert">{sectionError}</p>}
 
-            {/* Các khung nội dung môn học (Tài liệu + từng Buổi học tích hợp Bài tập, Quiz, Tệp) */}
+            {/* Các khung nội dung môn học (Tài liệu + từng Chương tích hợp Bài tập, Quiz, Tệp) */}
             {topicsError && <p className="form-error" role="alert">{topicsError.message}</p>}
             {topicsLoading && <p className="muted">{isVi ? 'Đang tải nội dung...' : 'Loading course content...'}</p>}
             {(() => {
@@ -303,11 +305,31 @@ export default function TeacherCourseDetailPage() {
                         {section.items
                           .filter((item) => item.kind !== 'quiz')
                           .map((item) => (
-                            <div key={item.id} className="course-resource">
-                              <FileText size={16} />
-                              <span>{isVi ? item.nameVi : item.nameEn}</span>
-                              <small>{item.kind.toUpperCase()}</small>
-                            </div>
+                            item.url ? (
+                              <a href={item.url} key={item.id} className="course-resource" target="_blank" rel="noreferrer">
+                                <FileText size={16} />
+                                <span>{isVi ? item.nameVi : item.nameEn}</span>
+                                <small>{item.kind.toUpperCase()}</small>
+                              </a>
+                            ) : item.kind === 'video' ? (
+                              <button
+                                type="button"
+                                key={item.id}
+                                className="course-resource"
+                                style={{ width: '100%', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                                onClick={() => setPreviewVideo({ title: isVi ? item.nameVi : item.nameEn, sectionTitle: isVi ? section.titleVi : section.titleEn, durationSeconds: item.durationSeconds })}
+                              >
+                                <PlayCircle size={16} />
+                                <span>{isVi ? item.nameVi : item.nameEn}</span>
+                                <small>VIDEO</small>
+                              </button>
+                            ) : (
+                              <div key={item.id} className="course-resource">
+                                <FileText size={16} />
+                                <span>{isVi ? item.nameVi : item.nameEn}</span>
+                                <small>{item.kind.toUpperCase()}</small>
+                              </div>
+                            )
                           ))}
                         {chapterFiles.map((f) => (
                           <Link to={`/teacher/courses/${courseId}/files`} key={f.id} className="course-resource">
@@ -617,7 +639,7 @@ export default function TeacherCourseDetailPage() {
                   <table>
                     <thead>
                       <tr>
-                        <th>{isVi ? 'Buổi học' : 'Session'}</th>
+                        <th>{isVi ? 'Chương' : 'Session'}</th>
                         <th>{isVi ? 'Ngày' : 'Date'}</th>
                         <th>{isVi ? 'Trạng thái' : 'Status'}</th>
                         <th>{isVi ? 'Có mặt' : 'Present'}</th>
@@ -839,6 +861,16 @@ export default function TeacherCourseDetailPage() {
           </section>
         )}
       </main>
+      {previewVideo && (
+        <MockVideoModal
+          title={previewVideo.title}
+          sectionTitle={previewVideo.sectionTitle}
+          courseCode={courseId}
+          durationSeconds={previewVideo.durationSeconds}
+          isVi={isVi}
+          onClose={() => setPreviewVideo(null)}
+        />
+      )}
     </div>
   );
 }

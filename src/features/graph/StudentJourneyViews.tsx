@@ -56,13 +56,13 @@ function groupKeyOf(node: KnowledgeGraphNode): { key: string; label: string; sor
     const num = match ? Number(match[0]) : 500;
     return {
       key: `ch-${chapter}`,
-      label: `Buổi học ${match ? match[0] : chapter}`,
+      label: `Chương ${match ? match[0] : chapter}`,
       sortOrder: num,
     };
   }
   const week = props.default_week ?? props.defaultWeek;
   if (typeof week === 'number' && Number.isFinite(week)) {
-    return { key: `ch-ch${week}`, label: `Buổi học ${week}`, sortOrder: week };
+    return { key: `ch-ch${week}`, label: `Chương ${week}`, sortOrder: week };
   }
   return { key: 'general', label: 'Tổng quan & Khái niệm chung', sortOrder: 999 };
 }
@@ -80,7 +80,7 @@ function chapterInfoOf(node: KnowledgeGraphNode): { key: string; label: string; 
     const match = raw.match(/\d+/);
     return {
       key: raw.trim(),
-      label: match ? `Buổi học ${match[0]}` : raw.trim(),
+      label: match ? `Chương ${match[0]}` : raw.trim(),
       sortOrder: match ? Number(match[0]) : 500,
     };
   }
@@ -315,7 +315,7 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
   const canvasHeight = Math.max(280, ROADMAP_TOP_Y + Math.max(0, activeNodes.length - 1) * ROADMAP_STEP_Y + 90);
   const firstPendingIndex = activeNodes.findIndex((n) => {
     const st = String(n.properties?.status ?? '');
-    return st !== 'approved' && st !== 'mastered';
+    return st !== 'approved' && st !== 'instructor_approved' && st !== 'mastered';
   });
   const activeNodeIdx = firstPendingIndex >= 0 ? firstPendingIndex : 0;
 
@@ -759,7 +759,7 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
                           </div>
                           <div className="muted-xs" style={{ marginTop: 2 }}>
                             {hasLearning ? 'Buổi hiện tại' : 'Đã mở'}
-                            {bucket.chapterLabels.length > 1 ? ` · ${bucket.chapterLabels.length} buổi học` : ''}
+                            {bucket.chapterLabels.length > 1 ? ` · ${bucket.chapterLabels.length} chương` : ''}
                           </div>
                         </div>
                         <div style={{ textAlign: 'right', marginRight: 6 }}>
@@ -988,7 +988,7 @@ export function StudentJourneyViews({ courseId, data, mode, onOpenLearn, onFocus
           {learningStateMap.get(selectedNode.id)?.state === 'locked' && (
             <div style={{ marginTop: 10, padding: 8, borderRadius: 8, background: '#fef3c7', border: '1px solid #fcd34d', fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
               <Lock size={13} />
-              <span>{learningStateMap.get(selectedNode.id)?.lockReason ?? 'Cần hoàn thành buổi học trước.'}</span>
+              <span>{learningStateMap.get(selectedNode.id)?.lockReason ?? 'Cần hoàn thành chương trước.'}</span>
             </div>
           )}
 

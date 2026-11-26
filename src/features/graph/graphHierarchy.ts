@@ -22,7 +22,7 @@ export interface EdgeStyle {
 
 export const NODE_STYLES: Record<string, NodeStyle> = {
   Course: { fill: '#FFE8A3', stroke: '#E5B84B', r: 42, vi: 'Môn học' },
-  Chapter: { fill: '#DBEAFE', stroke: '#3B82F6', r: 36, vi: 'Buổi học' },
+  Chapter: { fill: '#DBEAFE', stroke: '#3B82F6', r: 36, vi: 'Chương' },
   LO: { fill: '#A7E8C5', stroke: '#5CB88A', r: 34, vi: 'Chuẩn đầu ra' },
   Assignment: { fill: '#FFB3AE', stroke: '#E0706A', r: 32, vi: 'Bài tập' },
   Concept: { fill: '#A6D8FA', stroke: '#58A4D8', r: 30, vi: 'Khái niệm' },
@@ -665,14 +665,14 @@ export function extractChapterMeta(node: KnowledgeGraphNode): {
     const clean = rawChapter.trim();
     const match = clean.match(/\d+/);
     const num = match ? Number(match[0]) : 500;
-    const code = match ? `Buổi học ${match[0]}` : clean;
+    const code = match ? `Chương ${match[0]}` : clean;
     const name = titleStr ? `${code}: ${titleStr}` : code;
     return { key: clean, code, name, sortOrder: num };
   }
 
   const week = props.default_week ?? props.defaultWeek;
   if (typeof week === 'number' && Number.isFinite(week)) {
-    const code = `Buổi học ${week}`;
+    const code = `Chương ${week}`;
     return { key: `ch${week}`, code, name: titleStr ? `${code}: ${titleStr}` : code, sortOrder: week };
   }
 

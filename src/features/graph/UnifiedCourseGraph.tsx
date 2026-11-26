@@ -381,7 +381,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                 </div>
                 <small className="muted-s">
                   {authoringMode === 'wizard'
-                    ? (isVi ? 'Tạo khung môn học, bài học theo buổi học, sinh quan hệ trên toàn bộ đồ thị và xuất bản (D4).' : 'Author outline, session lessons, graph relations, and publish.')
+                    ? (isVi ? 'Tạo khung môn học, bài học theo chương, sinh quan hệ trên toàn bộ đồ thị và xuất bản (D4).' : 'Author outline, chapter lessons, graph relations, and publish.')
                     : (isVi ? 'Thêm/sửa/xóa node & cạnh và kiểm tra tính hoàn thiện đồ thị.' : 'Add/edit/delete nodes & edges and check graph completeness.')}
                 </small>
               </div>
@@ -501,7 +501,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                 <h2>Môn học chưa có đồ thị tri thức</h2>
                 <p>
                   {canEdit
-                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo buổi học → D3: Sinh quan hệ trên toàn bộ đồ thị → D4: Xuất bản Course Graph) để kiểm soát từng buổi học ~20 node.'
+                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo chương → D3: Sinh quan hệ trên toàn bộ đồ thị → D4: Xuất bản Course Graph) để kiểm soát từng chương ~20 node.'
                     : 'Giảng viên chưa công bố đồ thị tri thức cho môn học này.'}
                 </p>
                 {canEdit && (

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, Edit3, FileText, Sigma, Users } from 'lucide-react';
+import { Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, Edit3, FileText, PlayCircle, Sigma, Users } from 'lucide-react';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
+import { MockVideoModal } from '../features/courses/MockVideoModal';
 import { StudentOnboardingPanel } from '../features/courses/StudentOnboardingPanel';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
@@ -16,6 +17,7 @@ export default function StudentCourseDetailPage() {
   const navigate = useNavigate();
   const { language } = useLanguage();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ materials: true, ch0: true });
+  const [previewVideo, setPreviewVideo] = useState<{ title: string; sectionTitle: string; durationSeconds?: number } | null>(null);
   const isVi = language === 'vi';
   const { data: courseData, error: coursesError } = useAsync(() => api.getStudentCourses(), []);
   const { data: sectionData, loading: sectionsLoading, error: sectionsError } =
@@ -116,6 +118,16 @@ export default function StudentCourseDetailPage() {
                             <a href={item.url} key={item.id} className="course-resource" target="_blank" rel="noreferrer">
                               <FileText size={16} /><span>{isVi ? item.nameVi : item.nameEn}</span><small>{item.kind.toUpperCase()}</small>
                             </a>
+                          ) : item.kind === 'video' ? (
+                            <button
+                              type="button"
+                              key={item.id}
+                              className="course-resource"
+                              style={{ width: '100%', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                              onClick={() => setPreviewVideo({ title: isVi ? item.nameVi : item.nameEn, sectionTitle: isVi ? section.titleVi : section.titleEn, durationSeconds: item.durationSeconds })}
+                            >
+                              <PlayCircle size={16} /><span>{isVi ? item.nameVi : item.nameEn}</span><small>VIDEO</small>
+                            </button>
                           ) : (
                             <div key={item.id} className="course-resource">
                               <FileText size={16} /><span>{isVi ? item.nameVi : item.nameEn}</span><small>{item.kind.toUpperCase()}</small>
@@ -202,6 +214,16 @@ export default function StudentCourseDetailPage() {
         )}
 
       </main>
+      {previewVideo && (
+        <MockVideoModal
+          title={previewVideo.title}
+          sectionTitle={previewVideo.sectionTitle}
+          courseCode={courseId}
+          durationSeconds={previewVideo.durationSeconds}
+          isVi={isVi}
+          onClose={() => setPreviewVideo(null)}
+        />
+      )}
     </div>
   );
 }

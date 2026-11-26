@@ -93,7 +93,9 @@ export default function StudentQuizPage() {
     }
   };
 
-  const canStart = !!quiz && quiz.status === 'published' && (fromNode || quiz.attemptsUsed < quiz.attemptsAllowed);
+  const dueMs = quiz?.dueAt ? Date.parse(quiz.dueAt) : NaN;
+  const isExpired = Number.isFinite(dueMs) && Date.now() > dueMs;
+  const canStart = !!quiz && quiz.status === 'published' && !isExpired && (fromNode || quiz.attemptsUsed < quiz.attemptsAllowed);
 
   const retry = async () => {
     setResult(null);
@@ -123,15 +125,26 @@ export default function StudentQuizPage() {
                   {isVi ? 'Số lần làm' : 'Attempts'}:{' '}
                   {fromNode ? (isVi ? 'Không giới hạn' : 'Unlimited') : `${quiz.attemptsUsed}/${quiz.attemptsAllowed}`}
                 </span>
+                {quiz.dueAt && (
+                  <span>{isVi ? 'Hạn đóng' : 'Due'}: {new Date(quiz.dueAt).toLocaleString(isVi ? 'vi-VN' : 'en-US')}</span>
+                )}
               </div>
             </header>
 
             {actionError && <p className="form-error" role="alert">{actionError}</p>}
             {!attempt && !result && (
               <section className="quiz-start-card">
-                <p>{isVi ? 'Thời gian bắt đầu tính ngay khi bạn bắt đầu. Hệ thống sẽ tự nộp khi hết giờ.' : 'The timer starts when you begin. Your answers will be submitted automatically when time runs out.'}</p>
+                <p>
+                  {isExpired
+                    ? (isVi ? 'Bài kiểm tra đã quá hạn. Chức năng làm bài đã bị khóa.' : 'This quiz has passed its deadline and is now locked.')
+                    : (isVi ? 'Thời gian bắt đầu tính ngay khi bạn bắt đầu. Hệ thống sẽ tự nộp khi hết giờ.' : 'The timer starts when you begin. Your answers will be submitted automatically when time runs out.')}
+                </p>
                 <button className="btn btn-primary" onClick={start} disabled={busy || !canStart}>
-                  {canStart ? (isVi ? 'Bắt đầu làm bài' : 'Start quiz') : (isVi ? 'Không còn lượt làm' : 'No attempts remaining')}
+                  {isExpired
+                    ? (isVi ? 'Đã quá hạn làm bài' : 'Quiz expired')
+                    : canStart
+                      ? (isVi ? 'Bắt đầu làm bài' : 'Start quiz')
+                      : (isVi ? 'Không còn lượt làm' : 'No attempts remaining')}
                 </button>
               </section>
             )}

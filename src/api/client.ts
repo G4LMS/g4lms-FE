@@ -423,12 +423,19 @@ export const api = {
       `/teacher/courses/${encodeURIComponent(courseId)}/assignments/${encodeURIComponent(assignmentId)}`,
       { method: 'DELETE' },
     ),
-  submitAssignment: (courseId: string, assignmentId: string, input: SubmitAssignmentInput): Promise<Assignment> =>
-    invoke(
+  submitAssignment: (courseId: string, assignmentId: string, input: SubmitAssignmentInput): Promise<Assignment> => {
+    const attachmentName = input.attachmentName ?? input.file?.name;
+    const text = input.text.trim() || (attachmentName ? `Đã đính kèm tệp: ${attachmentName}` : '');
+    return invoke(
       () => mockApi.submitAssignment(courseId, assignmentId, input),
       `/student/courses/${encodeURIComponent(courseId)}/assignments/${encodeURIComponent(assignmentId)}/submissions`,
-      json('POST', input),
-    ),
+      json('POST', {
+        text,
+        attachmentName,
+        attachmentUrl: input.attachmentUrl,
+      }),
+    );
+  },
   getAssignmentSubmissions: (courseId: string, assignmentId: string): Promise<AssignmentSubmissionRecord[]> =>
     invoke(
       () => mockApi.getAssignmentSubmissions(courseId, assignmentId),
