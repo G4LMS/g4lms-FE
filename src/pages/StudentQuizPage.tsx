@@ -159,33 +159,46 @@ export default function StudentQuizPage() {
                 <h2>{isVi ? 'Đã nộp bài' : 'Quiz submitted'}</h2>
                 <strong>{result.score?.toLocaleString(isVi ? 'vi-VN' : 'en-US')} / {result.maxScore}</strong>
                 <p>{result.correctCount}/{result.totalQuestions} {isVi ? 'câu trả lời đúng' : 'correct answers'}</p>
-                {result.totalQuestions > 0 && (result.correctCount ?? 0) / result.totalQuestions >= 0.7 ? (
-                  <p style={{ color: '#15803d', fontWeight: 600 }}>
-                    {isVi ? 'Đạt yêu cầu (≥ 70%) — Bài học đã hoàn thành và mở khóa bài tiếp theo!' : 'Passed (≥ 70%) — Next lesson unlocked!'}
-                  </p>
-                ) : (
-                  <p style={{ color: '#b45309' }}>
-                    {isVi ? 'Chưa đạt 70% để mở khóa bài học tiếp theo. Bạn có thể ôn lại và làm lại bài.' : 'Score below 70%. Review and try again to unlock the next lesson.'}
-                  </p>
-                )}
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 10 }}>
-                  {nodeId && (
-                    <Link className="btn btn-outline sm" to={`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`}>
-                      {isVi ? 'Quay lại bài học' : 'Back to lesson'}
-                    </Link>
-                  )}
-                  {result.totalQuestions > 0 && (result.correctCount ?? 0) / result.totalQuestions >= 0.7 ? (
-                    <Link className="btn btn-primary sm" to={`/courses/${courseId}/graph`}>
-                      {isVi ? 'Xem lộ trình & bài tiếp theo' : 'View path & next lesson'}
-                    </Link>
-                  ) : (
-                    canStart && (
-                      <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => void retry()}>
-                        {isVi ? 'Làm lại quiz' : 'Retake quiz'}
-                      </button>
-                    )
-                  )}
-                </div>
+                {(() => {
+                  const passThreshold = result.passScorePct ?? quiz.passScorePct ?? 70;
+                  const ratioPct = result.totalQuestions > 0 ? ((result.correctCount ?? 0) / result.totalQuestions) * 100 : 0;
+                  const didPass = result.passed ?? (ratioPct >= passThreshold);
+                  return (
+                    <>
+                      {didPass ? (
+                        <p style={{ color: '#15803d', fontWeight: 600 }}>
+                          {isVi
+                            ? `Đạt yêu cầu (≥ ${passThreshold}%) — Bài học đã hoàn thành và mở khóa bài tiếp theo!`
+                            : `Passed (≥ ${passThreshold}%) — Next lesson unlocked!`}
+                        </p>
+                      ) : (
+                        <p style={{ color: '#b45309' }}>
+                          {isVi
+                            ? `Chưa đạt ${passThreshold}% để mở khóa bài học tiếp theo. Bạn có thể ôn lại và làm lại bài.`
+                            : `Score below ${passThreshold}%. Review and try again to unlock the next lesson.`}
+                        </p>
+                      )}
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 10 }}>
+                        {nodeId && (
+                          <Link className="btn btn-outline sm" to={`/courses/${courseId}/learn/${encodeURIComponent(nodeId)}`}>
+                            {isVi ? 'Quay lại bài học' : 'Back to lesson'}
+                          </Link>
+                        )}
+                        {didPass ? (
+                          <Link className="btn btn-primary sm" to={`/courses/${courseId}/graph`}>
+                            {isVi ? 'Xem lộ trình & bài tiếp theo' : 'View path & next lesson'}
+                          </Link>
+                        ) : (
+                          canStart && (
+                            <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => void retry()}>
+                              {isVi ? 'Làm lại quiz' : 'Retake quiz'}
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </section>
             )}
           </>

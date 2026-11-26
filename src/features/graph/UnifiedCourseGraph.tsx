@@ -1,6 +1,6 @@
 import { Activity, Layers, LayoutList, Lock, Map as MapIcon, Network, PanelRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import type { KnowledgeEdgeType, KnowledgeNodeType } from '../../types';
 import { useAsync } from '../common/useAsync';
@@ -23,17 +23,21 @@ export function UnifiedCourseGraph({ role }: Props) {
   const { language } = useLanguage();
   const isVi = language === 'vi';
   const { courseId = '' } = useParams();
+  const [searchParams] = useSearchParams();
   const nav = useNavigate();
+
+  const initialViewParam = searchParams.get('view');
 
   const [editMode, setEditMode] = useState(canEdit);
   const [rightOpen, setRightOpen] = useState(true);
   const [healthOpen, setHealthOpen] = useState(false);
   const [authoringMode, setAuthoringMode] = useState<'wizard' | 'editor'>('wizard');
   const [view, setView] = useState<'path' | 'structure' | 'list' | 'authoring'>(
-    canEdit ? 'structure' : 'path',
+    canEdit ? (initialViewParam === 'authoring' ? 'authoring' : 'structure') : 'path',
   );
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
+  const [publishingDraft, setPublishingDraft] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
   const ready = true;
@@ -41,6 +45,12 @@ export function UnifiedCourseGraph({ role }: Props) {
     () => (courseId ? api.getKnowledgeGraph(courseId) : Promise.resolve(null)),
     [courseId, reloadTick],
   );
+  const { data: graphDrafts } = useAsync(
+    () => (canEdit && courseId && authoringMode === 'editor' ? api.listGraphDrafts(courseId).catch(() => []) : Promise.resolve([])),
+    [canEdit, courseId, authoringMode, reloadTick],
+  );
+  const openManualDraft =
+    (graphDrafts ?? []).find((d) => !d.publishedReleaseId && d.status !== 'archived' && d.status !== 'rejected') ?? null;
   const { data: studentCourses, error: studentCoursesError } = useAsync(
     () => (!canEdit ? api.getStudentCourses() : Promise.resolve([])),
     [canEdit],
@@ -54,9 +64,18 @@ export function UnifiedCourseGraph({ role }: Props) {
   useEffect(() => {
     setActionError('');
     setActionMessage('');
-    setView(canEdit ? 'structure' : 'path');
+    const requestedView = searchParams.get('view');
+    const requestedNode = searchParams.get('nodeId');
+    if (canEdit && requestedView === 'concepts') {
+      nav(
+        `/teacher/courses/${courseId}/content${requestedNode ? `?nodeId=${encodeURIComponent(requestedNode)}` : ''}`,
+        { replace: true },
+      );
+      return;
+    }
+    setView(canEdit ? (requestedView === 'authoring' ? 'authoring' : 'structure') : 'path');
     setAuthoringMode('wizard');
-  }, [courseId, canEdit]);
+  }, [courseId, canEdit, searchParams, nav]);
 
   const serviceError = [kgError, studentCoursesError, teacherCoursesError].find(Boolean);
   const coursesList = canEdit ? (teacherCourses ?? []) : (studentCourses ?? []);
@@ -77,6 +96,32 @@ export function UnifiedCourseGraph({ role }: Props) {
   }, [isD5Completed, authoringMode]);
 
   const refreshGraph = () => setReloadTick((tick) => tick + 1);
+
+  const handlePublishManualDraft = async () => {
+    if (!canEdit || !openManualDraft || publishingDraft) return;
+    setPublishingDraft(true);
+    setActionError('');
+    setActionMessage('');
+    try {
+      await api.publishCourseGraph(
+        courseId,
+        openManualDraft.draftRevision,
+        0,
+        `manual-pub-${Date.now()}`,
+        openManualDraft.draftId,
+      );
+      setActionMessage(
+        isVi
+          ? 'Đã xuất bản các thay đổi hiệu chỉnh sang Đồ thị môn học và Neo4j!'
+          : 'Published manual edits to Course Graph and Neo4j!',
+      );
+      refreshGraph();
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : 'Không thể xuất bản bản hiệu chỉnh.');
+    } finally {
+      setPublishingDraft(false);
+    }
+  };
 
   const syncGraphJsonToBe = async (note: string) => {
     try {
@@ -257,17 +302,19 @@ export function UnifiedCourseGraph({ role }: Props) {
     <div className={`page graph-page${canEdit ? ' teacher' : ''}`}>
       <AppHeader showEditToggle={showAuthoringEditor} editMode={editMode} onEditModeChange={setEditMode} />
 
-      <div className="crumbs top">
-        <a onClick={() => nav(canEdit ? '/teacher/courses' : '/home')}>{isVi ? 'Trang chủ' : 'Home'}</a>
-        <i>›</i>
-        <a onClick={() => nav(canEdit ? '/teacher/courses' : '/courses')}>{isVi ? 'Khóa học của tôi' : 'My courses'}</a>
-        <i>›</i>
-        <a>{courseName}</a>
-        <i>›</i>
-        <b>{isVi ? 'Đồ thị tri thức' : 'Knowledge graph'}</b>
-      </div>
+      {!(view === 'authoring' && canEdit) && (
+        <div className="crumbs top">
+          <a onClick={() => nav(canEdit ? '/teacher/courses' : '/home')}>{isVi ? 'Trang chủ' : 'Home'}</a>
+          <i>›</i>
+          <a onClick={() => nav(canEdit ? '/teacher/courses' : '/courses')}>{isVi ? 'Khóa học của tôi' : 'My courses'}</a>
+          <i>›</i>
+          <a>{courseName}</a>
+          <i>›</i>
+          <b>{isVi ? 'Đồ thị tri thức' : 'Knowledge graph'}</b>
+        </div>
+      )}
 
-      <div className={`course-subheader${canEdit ? ' teacher' : ''}`}>
+      <div className={`course-subheader${canEdit ? ' teacher' : ' compact-student'}${view === 'authoring' ? ' compact-authoring' : ''}`}>
         <div className="course-subheader-left">
           <CourseIndexSidebar courseId={courseId} role={role} inline />
           <div className="subheader-center">
@@ -352,7 +399,7 @@ export function UnifiedCourseGraph({ role }: Props) {
         <div className="graph-body" style={{ flex: 1, minHeight: 0 }}>
           {view === 'authoring' && canEdit ? (
             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%' }}>
-              <div className="authoring-subbar">
+              <div className="authoring-subbar compact">
                 <div className="kg-view-switch">
                   <button
                     type="button"
@@ -382,22 +429,45 @@ export function UnifiedCourseGraph({ role }: Props) {
                     {isVi ? (isD5Completed ? 'Hiệu chỉnh' : 'Hiệu chỉnh (Khóa · Chưa xong D4)') : (isD5Completed ? 'Edit' : 'Edit (Locked)')}
                   </button>
                 </div>
-                <small className="muted-s authoring-subbar-hint">
-                  {authoringMode === 'wizard'
-                    ? (isVi ? 'Tạo khung môn học, bài học theo buổi học, sinh quan hệ trên toàn bộ đồ thị và xuất bản (D4).' : 'Author outline, session lessons, graph relations, and publish.')
-                    : (isVi ? 'Thêm/sửa/xóa node & cạnh và kiểm tra tính hoàn thiện đồ thị.' : 'Add/edit/delete nodes & edges and check graph completeness.')}
-                </small>
+                {authoringMode !== 'wizard' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginLeft: 'auto' }}>
+                    <small className="muted-s authoring-subbar-hint">
+                      {isVi
+                        ? 'Chỉnh sửa thủ công trực tiếp nút/cạnh & nội dung bài học trên đồ thị môn học.'
+                        : 'Edit nodes, edges & lesson content directly on the course graph.'}
+                    </small>
+                    {openManualDraft && (
+                      <>
+                        <span className="pill-badge amber">
+                          {isVi ? `Có thay đổi nháp (Rev ${openManualDraft.draftRevision})` : `Draft Rev ${openManualDraft.draftRevision}`}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-primary sm"
+                          disabled={publishingDraft}
+                          onClick={handlePublishManualDraft}
+                        >
+                          {publishingDraft
+                            ? (isVi ? 'Đang xuất bản...' : 'Publishing...')
+                            : (isVi ? 'Xuất bản bản hiệu chỉnh' : 'Publish edits')}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
               {authoringMode === 'wizard' ? (
-                <div className="graph-stage" style={{ overflowY: 'auto', padding: '18px 20px 32px', flex: 1 }}>
+                <div className="graph-stage wizard-stage-host">
                   <CourseAuthoringWizard
                     courseId={courseId}
                     courseName={courseName}
                     hasPublishedGraph={isD5Completed}
+                    onGraphUpdated={refreshGraph}
                     onPublishedGraph={() => {
                       setView('structure');
                       refreshGraph();
                     }}
+                    onAuthorConceptContent={() => nav(`/teacher/courses/${courseId}/content`)}
                   />
                 </div>
               ) : !isD5Completed ? (
@@ -433,11 +503,12 @@ export function UnifiedCourseGraph({ role }: Props) {
                     onUpdateEdge={handleUpdateEdge}
                     onApproveNode={handleApproveNode}
                     onApproveEdge={handleApproveEdge}
-                    onOpenNodeEditor={(id) => nav(`/teacher/courses/${courseId}/nodes/${id}`)}
+                    onOpenNodeEditor={(id) => nav(`/teacher/courses/${courseId}/content?nodeId=${encodeURIComponent(id)}`)}
                   />
                   {healthOpen && (
                     <GraphHealthPanel
                       data={knowledgeGraph}
+                      onSelectNode={(id) => setFocusRequest({ id, nonce: Date.now() })}
                       onClose={() => setHealthOpen(false)}
                     />
                   )}
@@ -489,6 +560,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                   editMode={false}
                   rightOpen={rightOpen}
                   focusRequest={focusRequest}
+                  onOpenNodeEditor={(id) => nav(`/teacher/courses/${courseId}/content?nodeId=${encodeURIComponent(id)}`)}
                 />
               </div>
             )
@@ -503,7 +575,7 @@ export function UnifiedCourseGraph({ role }: Props) {
                 <h2>Môn học chưa có đồ thị tri thức</h2>
                 <p>
                   {canEdit
-                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo buổi học → D3: Sinh quan hệ trên toàn bộ đồ thị → D4: Xuất bản Course Graph) để kiểm soát từng buổi học ~20 node.'
+                    ? 'Hãy bắt đầu theo quy trình 4 bước (D1: Khung môn học → D2: Bài học theo chương → D3: Sinh quan hệ trên toàn bộ đồ thị → D4: Xuất bản Course Graph) để kiểm soát từng chương ~20 node.'
                     : 'Giảng viên chưa công bố đồ thị tri thức cho môn học này.'}
                 </p>
                 {canEdit && (

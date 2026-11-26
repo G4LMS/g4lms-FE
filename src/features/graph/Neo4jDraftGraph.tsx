@@ -50,6 +50,7 @@ export interface CreateDraftRelationInput {
   sourceId: string;
   targetId: string;
   relationType: 'PREREQUISITE' | 'PART_OF' | 'RELATED_TO';
+  strength?: 'hard' | 'soft' | null;
   reason: string;
   requiredKnowledge?: string;
 }
@@ -70,6 +71,8 @@ export type Neo4jDraftGraphProps =
       ) => Promise<void> | void;
       onCreateLesson?: (input: CreateDraftLessonInput) => Promise<void> | void;
       onDeleteLesson?: (lessonId: string) => Promise<void> | void;
+      /** Increment to programmatically open the manual lesson creation drawer form. */
+      createTrigger?: number;
     }
   | {
       mode: 'relations';
@@ -89,11 +92,19 @@ export type Neo4jDraftGraphProps =
       onDeleteRelation?: (relationId: string) => Promise<void> | void;
       /** Week (chapter) currently being edited at Step 3; its nodes get a highlight ring. */
       activeWeekId?: string;
+      /** Multi-chapter selection at Step 3; all included chapters get active highlight rings. */
+      activeWeekIds?: string[];
       activeWeekTitle?: string;
+      /** Display label for the currently selected snapshot baseline (e.g. 'Snapshot v2'). */
+      snapshotLabel?: string;
       /** True when the active week can no longer be edited (already merged into Master). */
       activeWeekLocked?: boolean;
+      /** True when all chapters are merged into Bản tạm. */
+      allMerged?: boolean;
       /** Increment to programmatically enter Connect Mode from outside the canvas. */
       connectTrigger?: number;
+      /** Jump and focus onto a specific edge from List view. */
+      focusEdgeRequest?: { id: string; nonce: number } | null;
     };
 
 type GraphLayer = 'full' | 'entity' | 'lexical';
@@ -548,24 +559,30 @@ function cypherForEdge(e: DraftEdge, src?: DraftNode, tgt?: DraftNode): string {
 export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
   const contextKey = props.mode === 'lessons' ? `lessons:${props.chapter.id}` : 'relations';
 
-  const hasInitialChunks = useMemo(() => {
-    if (props.mode === 'lessons') {
-      return props.lessons.some((l) => Boolean(l.sourceRef || (l.evidence && l.evidence.length > 0)));
-    }
-    return props.relations.some((r) => Boolean(r.sourceRef || (r.evidence && r.evidence.length > 0)));
-  }, [props]);
-
-  const [graphLayer, setGraphLayer] = useState<GraphLayer>(() =>
-    props.mode === 'lessons' && hasInitialChunks ? 'full' : 'entity',
-  );
-  /** Step 3: show the whole course graph or only the active week's sub-graph. */
-  const [graphScope, setGraphScope] = useState<'course' | 'week'>('course');
+  const [graphLayer, setGraphLayer] = useState<GraphLayer>('entity');
+  /** Step 3: incremental Bản tạm + active week, active week only, or whole course. */
+  const [graphScope, setGraphScope] = useState<'incremental' | 'week' | 'course'>('incremental');
   const [connectHint, setConnectHint] = useState<string | null>(null);
   const relActiveWeekId = props.mode === 'relations' ? props.activeWeekId : undefined;
+  const relActiveWeekIdSet = useMemo(() => {
+    const s = new Set<string>();
+    if (props.mode === 'relations') {
+      if (props.activeWeekId) s.add(props.activeWeekId);
+      (props.activeWeekIds ?? []).forEach((id) => s.add(id));
+    }
+    return s;
+  }, [props]);
+  const relActiveWeekTitle = props.mode === 'relations' ? props.activeWeekTitle : undefined;
+  const relSnapshotLabel = props.mode === 'relations' ? props.snapshotLabel : undefined;
   const relActiveWeekLocked = props.mode === 'relations' ? Boolean(props.activeWeekLocked) : false;
+  const relAllMerged = props.mode === 'relations' ? Boolean(props.allMerged) : false;
   const relConnectTrigger = props.mode === 'relations' ? props.connectTrigger ?? 0 : 0;
+  const lessonCreateTrigger = props.mode === 'lessons' ? props.createTrigger ?? 0 : 0;
+  const relFocusEdgeRequest = props.mode === 'relations' ? props.focusEdgeRequest ?? null : null;
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('overview');
-  const [hiddenLabels, setHiddenLabels] = useState<Set<NodeLabel>>(() => new Set());
+  const [hiddenLabels, setHiddenLabels] = useState<Set<NodeLabel>>(() =>
+    props.mode === 'lessons' ? new Set<NodeLabel>(['Session', 'LO']) : new Set<NodeLabel>(['LO']),
+  );
   const [hiddenEdgeTypes, setHiddenEdgeTypes] = useState<Set<RelType>>(() => new Set());
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [qualityHighlight, setQualityHighlight] = useState<'none' | 'warn' | 'missing_lo'>('none');
@@ -615,6 +632,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
   const [newRelSourceId, setNewRelSourceId] = useState('');
   const [newRelTargetId, setNewRelTargetId] = useState('');
   const [newRelType, setNewRelType] = useState<'PREREQUISITE' | 'PART_OF' | 'RELATED_TO'>('PREREQUISITE');
+  const [newRelStrength, setNewRelStrength] = useState<'hard' | 'soft'>('hard');
   const [newRelReason, setNewRelReason] = useState('');
   const [newRelRequired, setNewRelRequired] = useState('');
 
@@ -623,10 +641,12 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
   const [editRelSourceId, setEditRelSourceId] = useState('');
   const [editRelTargetId, setEditRelTargetId] = useState('');
   const [editRelType, setEditRelType] = useState<'PREREQUISITE' | 'PART_OF' | 'RELATED_TO'>('PREREQUISITE');
+  const [editRelStrength, setEditRelStrength] = useState<'hard' | 'soft'>('hard');
   const [editRelReason, setEditRelReason] = useState('');
   const [editRelRequired, setEditRelRequired] = useState('');
   const [editRelReviewNote, setEditRelReviewNote] = useState('');
 
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const rootGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const edgeGRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
@@ -647,16 +667,35 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
   const connectClickRef = useRef<(nodeId: string, node: DraftNode) => boolean>(() => false);
   connectClickRef.current = (nodeId: string, node: DraftNode) => {
     if (!connectMode || props.mode !== 'relations') return false;
-    if (node.label === 'Document' || node.label === 'Chunk' || node.label === 'LO') return false;
+    if (node.label === 'Document' || node.label === 'Chunk' || node.label === 'LO' || node.label === 'Course') {
+      setConnectHint('Chỉ có thể nối quan hệ giữa các Khái niệm / Chủ đề.');
+      return true;
+    }
+    if (!node.apiEndpointId || node.nodeScope === 'other') {
+      setConnectHint('Chỉ nối được giữa chương đang xử lý và các nút đã có trong Bản tạm.');
+      return true;
+    }
     if (!connectSourceId) {
       setConnectSourceId(nodeId);
+      setConnectHint(null);
       return true;
     }
     if (connectSourceId === nodeId) return true;
+    const srcNode = fullGraph.nodeById.get(connectSourceId);
+    if (!srcNode?.apiEndpointId) {
+      setConnectSourceId(null);
+      return true;
+    }
+    if (srcNode.nodeScope !== 'active' && node.nodeScope !== 'active') {
+      setConnectHint('Cần chọn ít nhất 1 nút thuộc chương đang nối (viền nét đứt) để liên kết với Bản tạm.');
+      return true;
+    }
     setConnectMode(false);
-    setNewRelSourceId(connectSourceId);
-    setNewRelTargetId(nodeId);
+    setConnectHint(null);
+    setNewRelSourceId(srcNode.apiEndpointId);
+    setNewRelTargetId(node.apiEndpointId);
     setNewRelType('PREREQUISITE');
+    setNewRelStrength('hard');
     setNewRelReason('');
     setNewRelRequired('');
     setConnectSourceId(null);
@@ -668,13 +707,22 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     return true;
   };
 
+  useEffect(() => {
+    if (relConnectTrigger > 0 && props.mode === 'relations' && !props.locked && !relActiveWeekLocked && props.onCreateRelation) {
+      setConnectHint(null);
+      setConnectSourceId(null);
+      setConnectMode(true);
+    }
+  }, [relConnectTrigger, props.mode, props.locked, relActiveWeekLocked]);
+
   // Reset transient state when switching between D2 chapters or D2 <-> D3
   useEffect(() => {
-    setGraphLayer(props.mode === 'lessons' && hasInitialChunks ? 'full' : 'entity');
+    setGraphLayer('entity');
     setDrawerTab('overview');
     setDrawerCreateMode('none');
     setConnectMode(false);
     setConnectSourceId(null);
+    setConnectHint(null);
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setEditingLessonId(null);
@@ -682,11 +730,31 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     setStatusFilter('all');
     setQualityHighlight('none');
     setSearchQuery('');
-    setHiddenLabels(new Set());
+    setHiddenLabels(
+      props.mode === 'lessons' ? new Set<NodeLabel>(['Session', 'LO']) : new Set<NodeLabel>(['LO']),
+    );
     setHiddenEdgeTypes(new Set());
     setPinnedCount(0);
     autoFitRef.current = true;
   }, [contextKey]);
+
+  useEffect(() => {
+    if (lessonCreateTrigger > 0 && props.mode === 'lessons' && !props.locked && props.onCreateLesson) {
+      setNewTitle('');
+      setNewContent('');
+      setNewLevel('lesson');
+      setNewOutcome('');
+      setNewDuration('');
+      setNewLoCodes([]);
+      setNewAliases('');
+      setNewSlideId('');
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setDrawerCreateMode('lesson');
+      setDrawerTab('inspector');
+      setInspectorOpen(true);
+    }
+  }, [lessonCreateTrigger, props.mode, props.locked]);
 
   useEffect(() => {
     setEditingLessonId(null);
@@ -871,6 +939,17 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     } else {
       const chapterById = new Map(props.chapters.map((c) => [c.id, c]));
       const kgNodeById = new Map((props.reviewGraph?.nodes ?? []).map((n) => [n.id, n]));
+      const localToCanon = new Map<string, string>();
+      const canonToEp = new Map<string, RelationEndpointOption>();
+      (props.endpoints ?? []).forEach((ep) => {
+        const canon = ep.canonicalId || ep.id;
+        localToCanon.set(ep.id, canon);
+        localToCanon.set(canon, canon);
+        if (!canonToEp.has(canon) || ep.inDraft) {
+          canonToEp.set(canon, ep);
+        }
+      });
+      const canonicalIdFor = (rawId: string) => localToCanon.get(rawId) ?? rawId;
 
       const hasRelWarning = (r: CourseRelationItem) =>
         Boolean(r.hasWarning || (r.assessment && r.assessment.verdict !== 'supported'));
@@ -884,45 +963,113 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
       });
 
       const ensureNode = (
-        id: string,
+        rawId: string,
         fallbackName: string,
         chapterId: string,
         fallbackLabel: NodeLabel,
+        scopeOverride?: GraphItemScope,
+        apiEpId?: string,
       ) => {
+        const id = canonicalIdFor(rawId);
         const existing = nodeById.get(id);
         if (existing) {
           if (existing.label === 'Concept' && fallbackLabel !== 'Concept') {
             existing.label = fallbackLabel;
             existing.r = NODE_PALETTE[fallbackLabel].r;
           }
-          return;
+          if (scopeOverride === 'active') existing.nodeScope = 'active';
+          if (apiEpId && !existing.apiEndpointId) existing.apiEndpointId = apiEpId;
+          return id;
         }
-        const kgNode = kgNodeById.get(id);
+        const kgNode = kgNodeById.get(id) ?? kgNodeById.get(rawId);
+        const ep = canonToEp.get(id);
+        const rawWeekId = String(
+          chapterId ||
+            ep?.weekId ||
+            kgNode?.properties?.week_id ||
+            kgNode?.properties?.chapter_id ||
+            '',
+        );
         let label = kgNode ? normalizeNodeLabel(kgNode.type) : fallbackLabel;
+        if (!kgNode && ep?.level === 'topic') label = 'Topic';
         if (!kgNode && (/^L\.?O\.?\d/i.test(fallbackName) || /^lo:/i.test(id))) {
           label = 'LO';
         }
-        const chTitle = chapterById.get(chapterId)?.title;
+        const isActiveWeek = Boolean(rawWeekId && relActiveWeekIdSet.has(rawWeekId));
+        const computedScope: GraphItemScope =
+          scopeOverride ??
+          (ep?.inDraft || isActiveWeek
+            ? 'active'
+            : kgNode?.properties?.scope === 'master' || ep
+              ? 'master'
+              : 'other');
+        const chTitle =
+          (typeof kgNode?.properties?.chapter_title === 'string' && kgNode.properties.chapter_title) ||
+          chapterById.get(rawWeekId)?.title ||
+          (computedScope === 'active' ? relActiveWeekTitle : undefined);
         const n: DraftNode = {
           id,
           label,
-          name: kgNode?.name || fallbackName || id,
-          caption: kgNode?.name || fallbackName || id,
+          name: kgNode?.name || ep?.name || fallbackName || id,
+          caption: kgNode?.name || ep?.name || fallbackName || id,
           chapterTitle: chTitle,
           description: kgNode?.description,
           properties: kgNode?.properties,
+          nodeScope: computedScope,
+          apiEndpointId: apiEpId ?? ep?.id ?? (computedScope === 'master' && label !== 'LO' ? id : undefined),
           r: NODE_PALETTE[label].r,
         };
         nodes.push(n);
         nodeById.set(id, n);
+        return id;
       };
 
-      // Seed endpoints passed from BE so even unlinked draft concepts appear as connectable nodes
+      // 1. Seed Master / Snapshot nodes & explicitly selected raw chapters when viewing incremental or whole-course graph
+      if (graphScope !== 'week' || relActiveWeekIdSet.size > 0) {
+        for (const kgNode of props.reviewGraph?.nodes ?? []) {
+          if (kgNode.type === 'Course') continue;
+          const nScope = kgNode.properties?.scope;
+          const nWeek = String(kgNode.properties?.week_id || kgNode.properties?.chapter_id || '');
+          const inSelectedWeek = Boolean(nWeek && relActiveWeekIdSet.has(nWeek));
+          if (graphScope === 'week' && !inSelectedWeek) continue;
+          if (inSelectedWeek || nScope === 'master' || (graphScope === 'course' && nScope === 'draft') || nScope === 'active') {
+            const isMasterOrActive = nScope === 'master' || nScope === 'active' || inSelectedWeek;
+            const lbl = normalizeNodeLabel(kgNode.type);
+            const scope: GraphItemScope =
+              inSelectedWeek && (relAllMerged || nScope !== 'master')
+                ? 'active'
+                : nScope === 'active'
+                  ? 'active'
+                  : nScope === 'master'
+                    ? 'master'
+                    : 'other';
+            ensureNode(
+              kgNode.id,
+              kgNode.name,
+              nWeek,
+              lbl,
+              scope,
+              isMasterOrActive && lbl !== 'LO' ? canonToEp.get(kgNode.id)?.id ?? kgNode.id : undefined,
+            );
+          }
+        }
+      }
+
+      // 2. Seed endpoints passed from BE for the active week (and Master)
       (props.endpoints ?? []).forEach((ep) => {
+        if (!ep.inDraft && graphScope === 'week') return;
         const lbl: NodeLabel = ep.level === 'topic' ? 'Topic' : 'Concept';
-        ensureNode(ep.id, ep.name, '', lbl);
+        const wk = ep.weekId || (ep.inDraft ? relActiveWeekId || '' : '');
+        const scope: GraphItemScope = ep.inDraft
+          ? 'active'
+          : relAllMerged && relActiveWeekId && wk === relActiveWeekId
+            ? 'active'
+            : 'master';
+        ensureNode(ep.id, ep.name, wk, lbl, scope, ep.id);
       });
 
+      // 3. Add active-week relation edges (editable)
+      const activeEdgeSigs = new Set<string>();
       filteredRelations.forEach((rel) => {
         const tgtFallback: NodeLabel =
           rel.relationType === 'DEVELOP'
@@ -930,18 +1077,22 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             : rel.relationType === 'PART_OF'
               ? 'Topic'
               : 'Concept';
-        ensureNode(rel.sourceId, rel.sourceName, rel.sourceChapterId, 'Concept');
-        ensureNode(rel.targetId, rel.targetName, rel.targetChapterId, tgtFallback);
+        const srcCanon = ensureNode(rel.sourceId, rel.sourceName, rel.sourceChapterId, 'Concept');
+        const tgtCanon = ensureNode(rel.targetId, rel.targetName, rel.targetChapterId, tgtFallback);
+        activeEdgeSigs.add(`${srcCanon}|${tgtCanon}|${rel.relationType}`);
 
         addEdgeUnique({
           id: rel.id,
-          sourceId: rel.sourceId,
-          targetId: rel.targetId,
+          sourceId: srcCanon,
+          targetId: tgtCanon,
           type: rel.relationType,
           labelText: rel.relationType,
           decision: rel.decision,
           hasWarning: hasRelWarning(rel),
           relationRef: rel,
+          edgeScope: 'active',
+          reason: rel.reason,
+          requiredKnowledge: rel.requiredKnowledge,
         });
 
         const docTitle = chapterById.get(rel.sourceChapterId)?.title || 'Tài liệu môn học';
@@ -960,21 +1111,52 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             isEdge: true,
           });
           addEdgeUnique({
-            id: `edge:ment:${rel.sourceId}:${chunkNode.id}`,
-            sourceId: rel.sourceId,
+            id: `edge:ment:${srcCanon}:${chunkNode.id}`,
+            sourceId: srcCanon,
             targetId: chunkNode.id,
             type: 'MENTIONED_IN',
             labelText: 'MENTIONED_IN',
           });
           addEdgeUnique({
-            id: `edge:ment:${rel.targetId}:${chunkNode.id}`,
-            sourceId: rel.targetId,
+            id: `edge:ment:${tgtCanon}:${chunkNode.id}`,
+            sourceId: tgtCanon,
             targetId: chunkNode.id,
             type: 'MENTIONED_IN',
             labelText: 'MENTIONED_IN',
           });
         });
       });
+
+      // 4. Add Master (Bản tạm) & optional other-week edges from reviewGraph
+      if (graphScope !== 'week') {
+        for (const kgEdge of props.reviewGraph?.edges ?? []) {
+          const rtype = kgEdge.type as RelType;
+          if (!EDGE_PALETTE[rtype]) continue;
+          const eScopeRaw = kgEdge.properties?.scope;
+          if (eScopeRaw !== 'master' && graphScope !== 'course') continue;
+          const srcCanon = canonicalIdFor(kgEdge.source);
+          const tgtCanon = canonicalIdFor(kgEdge.target);
+          if (!nodeById.has(srcCanon) || !nodeById.has(tgtCanon)) continue;
+          if (activeEdgeSigs.has(`${srcCanon}|${tgtCanon}|${rtype}`)) continue;
+          const edgeScope: GraphItemScope = eScopeRaw === 'master' ? 'master' : 'other';
+          const edgeWeek = String(kgEdge.properties?.week_id || '');
+          const isActiveMergedHighlight = relAllMerged && relActiveWeekId && edgeWeek === relActiveWeekId;
+          addEdgeUnique({
+            id: `kg:${srcCanon}:${rtype}:${tgtCanon}`,
+            sourceId: srcCanon,
+            targetId: tgtCanon,
+            type: rtype,
+            labelText: rtype,
+            decision: kgEdge.properties?.status === 'proposed' ? 'PENDING' : 'APPROVE',
+            edgeScope: isActiveMergedHighlight ? 'active' : edgeScope,
+            reason: typeof kgEdge.properties?.reason === 'string' ? kgEdge.properties.reason : undefined,
+            requiredKnowledge:
+              typeof kgEdge.properties?.required_knowledge === 'string'
+                ? kgEdge.properties.required_knowledge
+                : undefined,
+          });
+        }
+      }
     }
 
     const docNodes = nodes.filter((n) => n.label === 'Document');
@@ -1010,7 +1192,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     });
 
     return { nodes, edges, nodeById, edgeById };
-  }, [props, statusFilter]);
+  }, [props, statusFilter, graphScope, relActiveWeekId, relActiveWeekIdSet, relActiveWeekTitle, relAllMerged]);
 
   const chunkOptions = useMemo(() => {
     return fullGraph.nodes
@@ -1026,19 +1208,33 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
   const endpointOptions = useMemo<RelationEndpointOption[]>(() => {
     if (props.mode !== 'relations') return [];
     const map = new Map<string, RelationEndpointOption>();
-    (props.endpoints ?? []).forEach((ep) => map.set(ep.id, ep));
+    const addEp = (ep: RelationEndpointOption) => {
+      const key = ep.canonicalId || ep.id;
+      const existing = map.get(key);
+      if (!existing || (!existing.inDraft && ep.inDraft)) {
+        map.set(key, ep);
+      }
+    };
+    (props.endpoints ?? []).forEach(addEp);
     fullGraph.nodes.forEach((n) => {
-      if (n.label === 'Document' || n.label === 'Chunk' || n.label === 'LO' || n.label === 'Session' || n.label === 'Course') {
+      if (
+        !n.apiEndpointId ||
+        n.nodeScope === 'other' ||
+        n.label === 'Document' ||
+        n.label === 'Chunk' ||
+        n.label === 'LO' ||
+        n.label === 'Session' ||
+        n.label === 'Course'
+      ) {
         return;
       }
-      if (!map.has(n.id)) {
-        map.set(n.id, {
-          id: n.id,
-          name: n.name,
-          inDraft: true,
-          level: n.label === 'Topic' ? 'topic' : 'lesson',
-        });
-      }
+      addEp({
+        id: n.apiEndpointId,
+        name: n.name,
+        inDraft: n.nodeScope === 'active',
+        level: n.label === 'Topic' ? 'topic' : 'lesson',
+        canonicalId: n.id,
+      });
     });
     return Array.from(map.values()).sort((a, b) => {
       if (a.inDraft !== b.inDraft) return a.inDraft ? -1 : 1;
@@ -1283,6 +1479,28 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     [graphLayer, focusNode],
   );
 
+  useEffect(() => {
+    if (relFocusEdgeRequest?.id) {
+      focusEdge(relFocusEdgeRequest.id);
+    }
+  }, [relFocusEdgeRequest?.nonce, relFocusEdgeRequest?.id, focusEdge]);
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let frame = 0;
+    const obs = new ResizeObserver(() => {
+      if (!autoFitRef.current) return;
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => fitView(false));
+    });
+    obs.observe(el);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      obs.disconnect();
+    };
+  }, [fitView]);
+
   const syncPinnedCount = useCallback(() => {
     let count = 0;
     posMapRef.current.forEach((sn) => {
@@ -1443,6 +1661,16 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     const eAll = eEnter.merge(eSel);
     eAll
       .classed('is-rejected', (d) => d.data.decision === 'REJECT')
+      .classed('is-master-edge', (d) => d.data.edgeScope === 'master')
+      .classed('is-other-edge', (d) => d.data.edgeScope === 'other')
+      .classed('is-cross-chapter', (d) =>
+        Boolean(
+          d.data.relationRef &&
+            d.data.relationRef.sourceChapterId &&
+            d.data.relationRef.targetChapterId &&
+            d.data.relationRef.sourceChapterId !== d.data.relationRef.targetChapterId,
+        ),
+      )
       .on('click', (ev, d) => {
         ev.stopPropagation();
         setSelectedEdgeId(d.id);
@@ -1482,6 +1710,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     nSel.exit().remove();
 
     const nEnter = nSel.enter().append('g').attr('class', 'n4j-node');
+    nEnter.append('circle').attr('class', 'n4j-week-ring');
     nEnter.append('circle').attr('class', 'n4j-ring');
     nEnter.append('circle').attr('class', 'n4j-body-circle');
     nEnter.append('circle').attr('class', 'n4j-status-dot').attr('r', 5.5);
@@ -1493,7 +1722,14 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     const nAll = nEnter.merge(nSel);
     nAll
       .classed('is-rejected', (d) => d.data.decision === 'REJECT')
-      .classed('is-chunk', (d) => d.data.label === 'Chunk');
+      .classed('is-chunk', (d) => d.data.label === 'Chunk')
+      .classed('is-active-week', (d) => d.data.nodeScope === 'active')
+      .classed('is-master-node', (d) => d.data.nodeScope === 'master')
+      .classed('is-other-week', (d) => d.data.nodeScope === 'other');
+
+    nAll
+      .select<SVGCircleElement>('.n4j-week-ring')
+      .attr('r', (d) => d.r * ns + 5);
 
     nAll
       .select<SVGCircleElement>('.n4j-ring')
@@ -1636,7 +1872,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
       if (autoFitRef.current) fitView(true);
     });
 
-    const structKey = `${graphLayer}::${visible.nodes
+    const structKey = `${graphLayer}::${graphScope}::${visible.nodes
       .map((n) => n.id)
       .sort()
       .join(',')}::${visible.edges
@@ -1655,6 +1891,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
   }, [
     visible,
     graphLayer,
+    graphScope,
     contextKey,
     relayoutCounter,
     showEdgeLabels,
@@ -1687,6 +1924,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     );
 
     const nAll = nodeG.selectAll<SVGGElement, SimNode>('g.n4j-node');
+    nAll.select<SVGCircleElement>('.n4j-week-ring').attr('r', (d) => d.r * nodeScale + 5);
     nAll.select<SVGCircleElement>('.n4j-ring').attr('r', (d) => d.r * nodeScale + 6);
     nAll.select<SVGCircleElement>('.n4j-body-circle').attr('r', (d) => d.r * nodeScale);
     nAll
@@ -1939,22 +2177,50 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
   };
 
   const openCreateRelationForm = (preSrc?: string, preTgt?: string) => {
-    const first = preSrc ?? endpointOptions[0]?.id ?? '';
+    const first =
+      preSrc ??
+      endpointOptions.find((e) => e.inDraft)?.id ??
+      endpointOptions[0]?.id ??
+      '';
     const second =
       preTgt ?? endpointOptions.find((e) => e.id !== first)?.id ?? '';
     setNewRelSourceId(first);
     setNewRelTargetId(second);
     setNewRelType('PREREQUISITE');
+    setNewRelStrength('hard');
     setNewRelReason('');
     setNewRelRequired('');
     setConnectMode(false);
     setConnectSourceId(null);
+    setConnectHint(null);
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setDrawerCreateMode('relation');
     setDrawerTab('inspector');
     setInspectorOpen(true);
   };
+
+  const getNextReviewTargetId = useCallback(
+    (currentId: string): string | null => {
+      if (props.mode === 'lessons') {
+        const candidates = props.lessons.filter(
+          (l) => l.id !== currentId && (l.decision === 'PENDING' || l.hasWarning),
+        );
+        if (candidates.length === 0) return null;
+        const curIdx = props.lessons.findIndex((l) => l.id === currentId);
+        const after = props.lessons.slice(curIdx + 1).find((l) => l.id !== currentId && (l.decision === 'PENDING' || l.hasWarning));
+        return (after ?? candidates[0]).id;
+      }
+      const candidates = props.relations.filter(
+        (r) => r.id !== currentId && (r.decision === 'PENDING' || r.hasWarning),
+      );
+      if (candidates.length === 0) return null;
+      const curIdx = props.relations.findIndex((r) => r.id === currentId);
+      const after = props.relations.slice(curIdx + 1).find((r) => r.id !== currentId && (r.decision === 'PENDING' || r.hasWarning));
+      return (after ?? candidates[0]).id;
+    },
+    [props],
+  );
 
   const renderIncidentLinks = () => {
     const renderGroup = (title: string, list: DraftEdge[], dir: 'out' | 'in') => {
@@ -2281,14 +2547,26 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
           </label>
 
           {newRelType === 'PREREQUISITE' && (
-            <label className="n4j-field">
-              <span>Kiến thức cần nắm trước</span>
-              <input
-                value={newRelRequired}
-                onChange={(e) => setNewRelRequired(e.target.value)}
-                placeholder="VD: Nắm cấu trúc node và con trỏ trước khi học B+ Tree"
-              />
-            </label>
+            <>
+              <label className="n4j-field">
+                <span>Mức độ tiên quyết</span>
+                <select
+                  value={newRelStrength}
+                  onChange={(e) => setNewRelStrength(e.target.value as 'hard' | 'soft')}
+                >
+                  <option value="hard">Bắt buộc (hard)</option>
+                  <option value="soft">Khuyến nghị (soft)</option>
+                </select>
+              </label>
+              <label className="n4j-field">
+                <span>Kiến thức cần nắm trước</span>
+                <input
+                  value={newRelRequired}
+                  onChange={(e) => setNewRelRequired(e.target.value)}
+                  placeholder="VD: Nắm cấu trúc node và con trỏ trước khi học B+ Tree"
+                />
+              </label>
+            </>
           )}
 
           <label className="n4j-field">
@@ -2311,6 +2589,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
                   sourceId: newRelSourceId,
                   targetId: newRelTargetId,
                   relationType: newRelType,
+                  strength: newRelType === 'PREREQUISITE' ? newRelStrength : null,
                   reason: newRelReason.trim() || 'Giảng viên bổ sung quan hệ thủ công',
                   requiredKnowledge:
                     newRelType === 'PREREQUISITE'
@@ -2379,7 +2658,9 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
 
         <h4 className="n4j-insp-title">{lesson.title}</h4>
 
-        {props.mode === 'lessons' && (
+        {props.mode === 'lessons' && (() => {
+          const nextLessonId = getNextReviewTargetId(lesson.id);
+          return (
           <div className="n4j-insp-actions">
             <button
               type="button"
@@ -2390,6 +2671,20 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
               <Check size={13} />{' '}
               {lesson.decision === 'APPROVE' || lesson.decision === 'EDIT' ? 'Đã duyệt' : 'Duyệt'}
             </button>
+            {nextLessonId && (
+              <button
+                type="button"
+                className="n4j-act-btn approve"
+                disabled={props.busy || props.locked}
+                title="Duyệt nút này và chuyển ngay sang nút chờ duyệt tiếp theo"
+                onClick={async () => {
+                  await props.onLessonDecision(lesson.id, 'APPROVE');
+                  focusNode(nextLessonId);
+                }}
+              >
+                <Check size={13} /> Duyệt &amp; Tiếp →
+              </button>
+            )}
             <button
               type="button"
               className={`n4j-act-btn${isEditing ? ' active' : ''}`}
@@ -2444,7 +2739,8 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
               </button>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {isEditing && props.mode === 'lessons' && (
           <div className="n4j-edit-box">
@@ -2760,6 +3056,10 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     const verdict = rel?.assessment ? VERDICT_META[rel.assessment.verdict] : null;
     const warningText = rel?.assessment?.issue || rel?.aiComment || '';
     const isEditing = editingEdgeId === edge.id;
+    const isCrossChapter = Boolean(
+      rel && rel.sourceChapterId && rel.targetChapterId && rel.sourceChapterId !== rel.targetChapterId,
+    );
+    const nextRelId = rel ? getNextReviewTargetId(rel.id) : null;
 
     return (
       <>
@@ -2775,6 +3075,16 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             >
               [:{edge.type}]
             </span>
+            {edge.edgeScope === 'master' ? (
+              <span className="n4j-scope-pill is-master">Đã trong Bản tạm</span>
+            ) : isCrossChapter ? (
+              <span className="n4j-scope-pill is-active">Liên chương</span>
+            ) : rel ? (
+              <span className="n4j-scope-pill">Nội chương</span>
+            ) : null}
+            {rel?.strength && (
+              <span className="n4j-status-pill muted">{rel.strength === 'hard' ? 'Bắt buộc (hard)' : 'Khuyến nghị (soft)'}</span>
+            )}
             {dec && <span className={`n4j-status-pill ${dec.tone}`}>{dec.text}</span>}
             {verdict && <span className={`n4j-status-pill ${verdict.tone}`}>{verdict.text}</span>}
           </div>
@@ -2828,17 +3138,31 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             <button
               type="button"
               className={`n4j-act-btn approve${rel.decision === 'APPROVE' || rel.decision === 'EDIT' ? ' on' : ''}`}
-              disabled={props.busy || props.locked}
+              disabled={props.busy || props.locked || relActiveWeekLocked}
               onClick={() => void props.onRelationDecision(rel.id, 'APPROVE')}
             >
               <Check size={13} />{' '}
               {rel.decision === 'APPROVE' || rel.decision === 'EDIT' ? 'Đã duyệt' : 'Duyệt'}
             </button>
+            {nextRelId && !relActiveWeekLocked && (
+              <button
+                type="button"
+                className="n4j-act-btn approve"
+                disabled={props.busy || props.locked}
+                title="Duyệt quan hệ này và chuyển ngay sang quan hệ chờ duyệt tiếp theo"
+                onClick={async () => {
+                  await props.onRelationDecision(rel.id, 'APPROVE');
+                  focusEdge(nextRelId);
+                }}
+              >
+                <Check size={13} /> Duyệt &amp; Tiếp →
+              </button>
+            )}
             {props.onUpdateRelation && (
               <button
                 type="button"
                 className={`n4j-act-btn${isEditing ? ' active' : ''}`}
-                disabled={props.busy || props.locked}
+                disabled={props.busy || props.locked || relActiveWeekLocked}
                 onClick={() => {
                   if (isEditing) {
                     setEditingEdgeId(null);
@@ -2851,6 +3175,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
                         ? rel.relationType
                         : 'PREREQUISITE',
                     );
+                    setEditRelStrength(rel.strength === 'soft' ? 'soft' : 'hard');
                     setEditRelReason(rel.reason ?? '');
                     setEditRelRequired(rel.requiredKnowledge ?? '');
                     setEditRelReviewNote(rel.reviewNote ?? '');
@@ -2864,7 +3189,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
               <button
                 type="button"
                 className="n4j-act-btn"
-                disabled={props.busy || props.locked}
+                disabled={props.busy || props.locked || relActiveWeekLocked}
                 title="Đảo chiều Nguồn ↔ Đích của quan hệ"
                 onClick={() =>
                   void props.onUpdateRelation?.(rel.id, {
@@ -2879,7 +3204,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             <button
               type="button"
               className={`n4j-act-btn reject${rel.decision === 'REJECT' ? ' on' : ''}`}
-              disabled={props.busy || props.locked}
+              disabled={props.busy || props.locked || relActiveWeekLocked}
               onClick={() => void props.onRelationDecision(rel.id, 'REJECT')}
             >
               <X size={13} /> Từ chối
@@ -2888,7 +3213,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
               <button
                 type="button"
                 className="n4j-act-btn reject icon"
-                disabled={props.busy || props.locked}
+                disabled={props.busy || props.locked || relActiveWeekLocked}
                 title="Xóa hẳn quan hệ này"
                 onClick={async () => {
                   if (!window.confirm(`Xóa quan hệ ${rel.sourceName} → ${rel.targetName}?`)) return;
@@ -2912,7 +3237,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
               >
                 {endpointOptions.map((ep) => (
                   <option key={ep.id} value={ep.id}>
-                    {ep.name} {ep.inDraft ? '' : '(Master)'}
+                    {ep.name} {ep.inDraft ? '(Chương đang nối)' : '(Bản tạm)'}
                   </option>
                 ))}
               </select>
@@ -2937,7 +3262,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
               >
                 {endpointOptions.map((ep) => (
                   <option key={ep.id} value={ep.id}>
-                    {ep.name} {ep.inDraft ? '' : '(Master)'}
+                    {ep.name} {ep.inDraft ? '(Chương đang nối)' : '(Bản tạm)'}
                   </option>
                 ))}
               </select>
@@ -2959,13 +3284,25 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
               </select>
             </label>
             {editRelType === 'PREREQUISITE' && (
-              <label className="n4j-field">
-                <span>Kiến thức yêu cầu</span>
-                <input
-                  value={editRelRequired}
-                  onChange={(e) => setEditRelRequired(e.target.value)}
-                />
-              </label>
+              <>
+                <label className="n4j-field">
+                  <span>Mức độ tiên quyết</span>
+                  <select
+                    value={editRelStrength}
+                    onChange={(e) => setEditRelStrength(e.target.value as 'hard' | 'soft')}
+                  >
+                    <option value="hard">Bắt buộc (hard)</option>
+                    <option value="soft">Khuyến nghị (soft)</option>
+                  </select>
+                </label>
+                <label className="n4j-field">
+                  <span>Kiến thức yêu cầu</span>
+                  <input
+                    value={editRelRequired}
+                    onChange={(e) => setEditRelRequired(e.target.value)}
+                  />
+                </label>
+              </>
             )}
             <label className="n4j-field">
               <span>Lý do quan hệ</span>
@@ -2996,6 +3333,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
                       sourceId: editRelSourceId,
                       targetId: editRelTargetId,
                       relationType: editRelType,
+                      strength: editRelType === 'PREREQUISITE' ? editRelStrength : null,
                       reason: editRelReason.trim() || rel.reason || 'Giảng viên điều chỉnh quan hệ',
                       requiredKnowledge:
                         editRelType === 'PREREQUISITE'
@@ -3039,6 +3377,12 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
                 {edge.type} ({palette.vi})
               </td>
             </tr>
+            {rel?.strength && (
+              <tr>
+                <td>strength</td>
+                <td>{rel.strength === 'hard' ? 'hard (Bắt buộc)' : 'soft (Khuyến nghị)'}</td>
+              </tr>
+            )}
             {rel?.confidence != null && (
               <tr>
                 <td>confidence</td>
@@ -3057,16 +3401,16 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
                 <td>{selectedEdgeTgt.chapterTitle}</td>
               </tr>
             )}
-            {rel?.reason && (
+            {(rel?.reason || edge.reason) && (
               <tr>
                 <td>reason</td>
-                <td>{rel.reason}</td>
+                <td>{rel?.reason ?? edge.reason}</td>
               </tr>
             )}
-            {rel?.requiredKnowledge && (
+            {(rel?.requiredKnowledge || edge.requiredKnowledge) && (
               <tr>
                 <td>required</td>
-                <td>{rel.requiredKnowledge}</td>
+                <td>{rel?.requiredKnowledge ?? edge.requiredKnowledge}</td>
               </tr>
             )}
             {rel?.reviewNote && (
@@ -3124,9 +3468,13 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     const canConnectFrom =
       props.mode === 'relations' &&
       Boolean(props.onCreateRelation) &&
+      !relActiveWeekLocked &&
+      Boolean(node.apiEndpointId) &&
+      node.nodeScope !== 'other' &&
       node.label !== 'Document' &&
       node.label !== 'Chunk' &&
-      node.label !== 'LO';
+      node.label !== 'LO' &&
+      node.label !== 'Course';
 
     return (
       <>
@@ -3138,6 +3486,12 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             >
               :{node.label}
             </span>
+            {node.nodeScope === 'active' && (
+              <span className="n4j-scope-pill is-active">Chương đang nối</span>
+            )}
+            {node.nodeScope === 'master' && (
+              <span className="n4j-scope-pill is-master">Đã trong Bản tạm</span>
+            )}
             <span className="n4j-status-pill muted">{palette.vi}</span>
           </div>
           <button
@@ -3168,8 +3522,9 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             <button
               type="button"
               className="n4j-act-btn approve on"
-              disabled={props.busy || props.locked}
+              disabled={props.busy || props.locked || relActiveWeekLocked}
               onClick={() => {
+                setConnectHint(null);
                 setConnectMode(true);
                 setConnectSourceId(node.id);
               }}
@@ -3353,43 +3708,78 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
     <div className="n4j-shell">
       {/* Neo4j Document Intelligence Top Workspace Bar */}
       <div className="n4j-topbar">
-        <div className="n4j-layer-switch" role="tablist" aria-label="Chế độ lớp đồ thị Neo4j">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={graphLayer === 'full'}
-            className={graphLayer === 'full' ? 'on' : ''}
-            onClick={() => setGraphLayer('full')}
-            title="Kết hợp cả Tài liệu/Chunk và Thực thể với liên kết MENTIONED_IN"
-          >
-            <Layers size={12} /> Đồ thị đầy đủ ({entityTotal + chunkTotal})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={graphLayer === 'entity'}
-            className={graphLayer === 'entity' ? 'on' : ''}
-            onClick={() => setGraphLayer('entity')}
-            title="Chỉ hiển thị đồ thị thực thể & quan hệ ngữ nghĩa"
-          >
-            Thực thể ({entityTotal})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={graphLayer === 'lexical'}
-            disabled={chunkTotal === 0}
-            className={graphLayer === 'lexical' ? 'on' : ''}
-            onClick={() => setGraphLayer('lexical')}
-            title={
-              chunkTotal > 0
-                ? 'Chỉ hiển thị Document → Chunk các trang tài liệu'
-                : 'Chưa có trích dẫn trang nguồn cho đồ thị này'
-            }
-          >
-            <FileText size={12} /> Tài liệu &amp; Chunk ({chunkTotal})
-          </button>
-        </div>
+        {props.mode === 'relations' ? (
+          <div className="n4j-scope-switch" role="tablist" aria-label="Phạm vi hiển thị đồ thị">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={graphScope === 'incremental'}
+              className={graphScope === 'incremental' ? 'on' : ''}
+              onClick={() => setGraphScope('incremental')}
+              title="Hiển thị Snapshot (Bản tạm) cùng các chương đã chọn"
+            >
+              <Layers size={12} /> {relSnapshotLabel ? `${relSnapshotLabel} + Đã chọn` : 'Bản tạm + Chương chọn'}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={graphScope === 'week'}
+              className={graphScope === 'week' ? 'on' : ''}
+              onClick={() => setGraphScope('week')}
+              title="Chỉ hiển thị các nút & quan hệ của các chương đang chọn"
+            >
+              Chỉ chương đã chọn
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={graphScope === 'course'}
+              className={graphScope === 'course' ? 'on' : ''}
+              onClick={() => setGraphScope('course')}
+              title="Hiển thị toàn bộ các chương trong môn học"
+            >
+              Toàn môn
+            </button>
+          </div>
+        ) : (
+          <div className="n4j-layer-switch" role="tablist" aria-label="Chế độ lớp đồ thị Neo4j">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={graphLayer === 'full'}
+              className={graphLayer === 'full' ? 'on' : ''}
+              onClick={() => setGraphLayer('full')}
+              title="Kết hợp cả Tài liệu/Chunk và Thực thể với liên kết MENTIONED_IN"
+            >
+              <Layers size={12} /> Đồ thị đầy đủ ({entityTotal + chunkTotal})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={graphLayer === 'entity'}
+              className={graphLayer === 'entity' ? 'on' : ''}
+              onClick={() => setGraphLayer('entity')}
+              title="Chỉ hiển thị đồ thị thực thể & quan hệ ngữ nghĩa"
+            >
+              Thực thể ({entityTotal})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={graphLayer === 'lexical'}
+              disabled={chunkTotal === 0}
+              className={graphLayer === 'lexical' ? 'on' : ''}
+              onClick={() => setGraphLayer('lexical')}
+              title={
+                chunkTotal > 0
+                  ? 'Chỉ hiển thị Document → Chunk các trang tài liệu'
+                  : 'Chưa có trích dẫn trang nguồn cho đồ thị này'
+              }
+            >
+              <FileText size={12} /> Tài liệu &amp; Chunk ({chunkTotal})
+            </button>
+          </div>
+        )}
 
         <div className="n4j-search">
           <Search size={13} className="n4j-search-ico" />
@@ -3452,12 +3842,31 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
             </button>
           )}
 
+          {props.mode === 'relations' && (
+            <button
+              type="button"
+              className={`n4j-topbar-btn${!hiddenLabels.has('LO') ? ' active' : ''}`}
+              onClick={() =>
+                setHiddenLabels((prev) => {
+                  const next = new Set(prev);
+                  if (next.has('LO')) next.delete('LO');
+                  else next.add('LO');
+                  return next;
+                })
+              }
+              title="Bật/tắt hiển thị các nút Chuẩn đầu ra (:LO)"
+            >
+              :LO {!hiddenLabels.has('LO') ? 'hiện' : 'ẩn'}
+            </button>
+          )}
+
           {props.mode === 'relations' && props.onCreateRelation && (
             <button
               type="button"
               className={`n4j-topbar-btn${connectMode ? ' active' : ''}`}
-              disabled={props.busy || props.locked}
+              disabled={props.busy || props.locked || relActiveWeekLocked}
               onClick={() => {
+                setConnectHint(null);
                 if (connectMode) {
                   setConnectMode(false);
                   setConnectSourceId(null);
@@ -3503,16 +3912,21 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
 
       {/* Main NVL Canvas + Right Needle Result/Inspector Drawer */}
       <div className="n4j-body">
-        <div className="n4j-stage">
+        <div className="n4j-stage" ref={stageRef}>
           <svg ref={svgRef} className="n4j-svg" />
 
           {connectMode && props.mode === 'relations' && (
             <div className="n4j-connect-banner">
-              <span>
-                {connectSourceId
-                  ? `Đã chọn nguồn: "${visible.nodeMap.get(connectSourceId)?.name ?? connectSourceId}" — hãy bấm nút ĐÍCH trên đồ thị`
-                  : 'Chế độ nối quan hệ: Bấm vào nút NGUỒN trên đồ thị để bắt đầu'}
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span>
+                  {connectSourceId
+                    ? `Đã chọn nguồn: "${visible.nodeMap.get(connectSourceId)?.name ?? connectSourceId}" — hãy bấm nút ĐÍCH trên đồ thị`
+                    : 'Chế độ nối quan hệ: Bấm vào nút NGUỒN trên đồ thị để bắt đầu'}
+                </span>
+                {connectHint && (
+                  <small style={{ color: '#b45309', fontWeight: 600 }}>{connectHint}</small>
+                )}
+              </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button
                   type="button"
@@ -3527,6 +3941,7 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
                   onClick={() => {
                     setConnectMode(false);
                     setConnectSourceId(null);
+                    setConnectHint(null);
                   }}
                 >
                   Hủy
@@ -3537,7 +3952,9 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
 
           {visible.nodes.length === 0 && (
             <div className="n4j-empty-overlay">
-              Không có nút hoặc quan hệ nào trong lớp hiển thị hiện tại.
+              {props.mode === 'lessons' && props.lessons.length === 0
+                ? 'Chưa có nút kiến thức nào trong chương này. Điền thông tin ở khung bên phải để tạo nút thủ công đầu tiên.'
+                : 'Không có nút hoặc quan hệ nào trong lớp hiển thị hiện tại.'}
             </div>
           )}
 
@@ -3767,6 +4184,20 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
 
       {/* Footer status & interaction legend */}
       <div className="n4j-legend">
+        {props.mode === 'relations' ? (
+          <>
+            <span>
+              <i className="n4j-legend-week-dot" /> Chương đang nối
+            </span>
+            <span>
+              <i className="n4j-leg-dot master" /> Bản tạm (đã gộp)
+            </span>
+          </>
+        ) : (
+          <span>
+            <i className="n4j-leg-dot chunk" /> Nguồn trang (:Chunk)
+          </span>
+        )}
         <span>
           <i className="n4j-leg-dot ok" /> Đã duyệt
         </span>
@@ -3775,9 +4206,6 @@ export function Neo4jDraftGraph(props: Neo4jDraftGraphProps) {
         </span>
         <span>
           <i className="n4j-leg-dot rej" /> Đã từ chối
-        </span>
-        <span>
-          <i className="n4j-leg-dot chunk" /> Nguồn trang (:Chunk)
         </span>
         <span style={{ marginLeft: 'auto' }}>
           <Minimize2 size={11} style={{ verticalAlign: -1, marginRight: 3 }} />

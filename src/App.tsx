@@ -7,7 +7,6 @@ import TeacherCoursesPage from './pages/TeacherCoursesPage';
 import TeacherCourseGraphPage from './pages/TeacherCourseGraphPage';
 import TeacherNodeEditorPage from './pages/TeacherNodeEditorPage';
 import HomePage from './pages/HomePage';
-import DashboardPage from './pages/Dashboard';
 import StudentCourseDetailPage from './pages/StudentCourseDetailPage';
 import StudentProfilePage from './pages/StudentProfilePage';
 import TeacherProfilePage from './pages/TeacherProfilePage';
@@ -19,7 +18,6 @@ import CourseAnnouncementsPage from './pages/CourseAnnouncementsPage';
 import CourseFilesPage from './pages/CourseFilesPage';
 import CourseQuizzesPage from './pages/CourseQuizzesPage';
 import CourseAttendancePage from './pages/CourseAttendancePage';
-import MessagesPage from './pages/MessagesPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import AdminEnrollmentsPage from './pages/AdminEnrollmentsPage';
@@ -57,8 +55,8 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/change-password" element={<ResetPasswordPage />} />
       <Route path="/home" element={<SignedIn><HomePage /></SignedIn>} />
-      <Route path="/dashboard" element={<SignedIn><DashboardPage /></SignedIn>} />
-      <Route path="/messages" element={<SignedIn><MessagesPage /></SignedIn>} />
+      <Route path="/dashboard" element={<Navigate to="/home" replace />} />
+      <Route path="/messages" element={<Navigate to="/home" replace />} />
       <Route path="/preferences" element={<Guard role="student"><StudentPreferencesPage /></Guard>} />
       <Route path="/admin" element={<Guard role="admin"><AdminDashboardPage /></Guard>} />
       <Route path="/admin/users" element={<Guard role="admin"><AdminUsersPage /></Guard>} />

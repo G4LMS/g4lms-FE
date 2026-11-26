@@ -31,7 +31,6 @@ export function AppHeader({ editMode, onEditModeChange, showEditToggle }: Props)
         ) : (
           <>
             <NavLink to="/home">{t('home')}</NavLink>
-            <NavLink to="/dashboard">{t('dashboard')}</NavLink>
             <NavLink to={coursesPath}>{t('courses')}</NavLink>
           </>
         )}

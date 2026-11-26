@@ -103,8 +103,23 @@ export function GraphHealthPanel({ data, onSelectNode, onClose }: Props) {
     const cycles = detectPrereqCycles(data);
     const orphans = concepts.filter((n) => (degree.get(n.id) ?? 0) === 0);
     const redundant = detectRedundantPrereqs(data);
-    const missingContent = concepts.filter((n) => !hasExplain.has(n.id) && !n.description?.trim());
-    const missingQuiz = concepts.filter((n) => !hasAssess.has(n.id));
+    const missingContent = concepts.filter((n) => {
+      const p = (n.properties ?? {}) as Record<string, unknown>;
+      const hasApprovedOrDraftContent =
+        Boolean(p.has_content) ||
+        Number(p.approved_content_count ?? 0) > 0 ||
+        Number(p.content_count ?? 0) > 0;
+      return !hasApprovedOrDraftContent && !hasExplain.has(n.id) && !n.description?.trim();
+    });
+    const missingQuiz = concepts.filter((n) => {
+      const p = (n.properties ?? {}) as Record<string, unknown>;
+      const hasPublishedOrDraftQuiz =
+        Boolean(p.has_quiz) ||
+        Number(p.published_quiz_count ?? 0) > 0 ||
+        Number(p.quiz_count ?? 0) > 0 ||
+        Number(p.item_count ?? 0) > 0;
+      return !hasPublishedOrDraftQuiz && !hasAssess.has(n.id);
+    });
     const pendingReview = data.nodes.filter((n) => {
       const st = String(n.properties?.status ?? '');
       return st === 'proposed' || st === 'draft' || st === 'pending_review';

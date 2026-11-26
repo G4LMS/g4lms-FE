@@ -1829,6 +1829,46 @@ export function KnowledgeGraphCanvas({
                 </span>
                 <div className="kg-title">{selectedNode.name}</div>
 
+                {isTeacher && selectedNode.type === 'Concept' && (() => {
+                  const p = selectedNode.props ?? {};
+                  const appContent = Number(p.approved_content_count ?? 0);
+                  const totalContent = Number(p.content_count ?? 0);
+                  const pubQuiz = Number(p.published_quiz_count ?? 0);
+                  const totalQuiz = Number(p.quiz_count ?? 0);
+                  const itemCount = Number(p.item_count ?? 0);
+                  const hasContent = Boolean(p.has_content) || appContent > 0;
+                  const hasQuiz = Boolean(p.has_quiz) || pubQuiz > 0;
+                  return (
+                    <div
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 8,
+                        border: '1px solid var(--line)',
+                        background: '#f8fafc',
+                        marginBottom: 10,
+                        fontSize: 11.5,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4,
+                      }}
+                    >
+                      <strong style={{ fontSize: 11, color: 'var(--ink)' }}>Bài học &amp; Kiểm tra Concept</strong>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Nội dung bài học:</span>
+                        <b style={{ color: hasContent ? '#15803d' : '#b45309' }}>
+                          {appContent > 0 ? `${appContent} đã duyệt` : totalContent > 0 ? `${totalContent} nháp` : 'Chưa có'}
+                        </b>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Bài kiểm tra:</span>
+                        <b style={{ color: hasQuiz ? '#15803d' : '#b45309' }}>
+                          {pubQuiz > 0 ? `${pubQuiz} quiz (${itemCount} câu)` : totalQuiz > 0 ? `Nháp (${itemCount} câu)` : 'Chưa có'}
+                        </b>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {isTeacher && selectedNode.needsReview && (
                   <div className="kg-warn">
                     Khái niệm do AI đề xuất (chưa xác nhận). Giảng viên có thể duyệt hoặc chỉnh sửa.
@@ -1836,6 +1876,15 @@ export function KnowledgeGraphCanvas({
                 )}
 
                 <div className="kg-panel-actions">
+                  {isTeacher && selectedNode.type === 'Concept' && onOpenNodeEditor && (
+                    <button
+                      type="button"
+                      className="btn btn-primary sm"
+                      onClick={() => onOpenNodeEditor(selectedNode.id)}
+                    >
+                      <Edit3 size={12} /> Soạn nội dung &amp; bài kiểm tra
+                    </button>
+                  )}
                   {showEditControls && selectedNode.needsReview && onApproveNode && (
                     <button
                       type="button"
@@ -1876,7 +1925,7 @@ export function KnowledgeGraphCanvas({
                       <Edit3 size={12} /> {quickEdit ? 'Đóng sửa nhanh' : 'Sửa nhanh'}
                     </button>
                   )}
-                  {showEditControls && selectedNode.type !== 'Course' && onOpenNodeEditor && (
+                  {showEditControls && selectedNode.type !== 'Course' && selectedNode.type !== 'Concept' && onOpenNodeEditor && (
                     <button
                       type="button"
                       className="btn btn-outline sm"

@@ -1,12 +1,13 @@
 import type {
   AdminAnnouncementRecord, AdminCourseOption, AdminCourseRecord, AdminEnrollment, AdminStats, AdminStudentOption, AdminUser, Announcement, Assignment, AssignmentSubmissionRecord, AttendanceSession, ChapterLessonItem, ClusterView, ConversationMessage, ConversationSummary,
-  CourseFile, CourseOutlineData, CourseOverallGrade, CourseRecommendation, CourseRelationItem, CourseSection, CreateAnnouncementInput, CreateAssignmentInput, CreateAttendanceSessionInput,
+  CourseFile, CourseGraphDraftSummary, CourseOutlineData, CourseOverallGrade, CourseRecommendation, CourseRelationItem, CourseSection, CreateAnnouncementInput, CreateAssignmentInput, CreateAttendanceSessionInput,
   CreateConversationInput, CreateQuizInput, CreateTeacherCourseInput, DashboardData, HeatSpot, HomeSlide,
   KnowledgeEdgeType, KnowledgeGraphData, KnowledgeGraphEdge, KnowledgeGraphNode, KnowledgeNodeType,
   LearningOutcome, LoginHeroStat, MessageContact, MessagePreview, NodeDetail, NodeEditorData,
-  NotificationRecord, OutlineDraftResponse, OutlineState, PdfFile, ProfileDetails, PublishCourseResponse, QueueSummary, Quiz, QuizAttempt, RelationEndpointOption, ReviewDecision, Role, StudentAttendanceData,
+  NotificationRecord, OutlineChapter, OutlineDraftResponse, OutlineState, PdfFile, ProfileDetails, PublicationStatusResponse, PublishCourseResponse, QueueSummary, Quiz, QuizAttempt, RelationEndpointOption, ReviewDecision, Role, Step3SnapshotSummary, Step3WorkspaceResponse, StudentAttendanceData,
   StudentCourse, StudentGradeItem, StudentGraph, StudentLearningProfile, SubmitAssignmentInput, SubmitQuizInput, TeacherCourse,
   TeacherCourseTopic, TeacherGradeRow, TeacherGraphData, UpdateAnnouncementInput, UpdateAssignmentInput, UpdateAttendanceSessionInput, UpdateGradebookRowInput, UpdateTeacherCourseInput, User, WorkflowJobResponse,
+  ConceptQuiz, ContentHistoryItem, ContentItem, CourseConceptsContentOverview, UpsertConceptQuizInput,
 } from '../src/types';
 import * as data from './fixtures';
 import { resolveRichConceptContent } from './conceptDetails';
@@ -112,8 +113,15 @@ interface AuthoringState {
   outlineRevision: number;
   lessonsByChapter: Record<string, ChapterLessonItem[]>;
   relations: CourseRelationItem[];
+  relationsByChapter?: Record<string, CourseRelationItem[]>;
+  draftPhaseByChapter?: Record<string, OutlineChapter['draftPhase']>;
+  needsRebaseByChapter?: Record<string, boolean>;
+  publishedMasterVersionByChapter?: Record<string, number | null>;
+  coursePublished?: boolean;
   relationRevision: number;
   masterVersion: number;
+  snapshots?: Step3SnapshotSummary[];
+  snapshotGraphs?: Record<string, KnowledgeGraphData>;
 }
 
 interface MockAuthoringJob {
@@ -173,6 +181,11 @@ function ensureAuthoringState(courseId: string): AuthoringState {
         outlineRevision: 2,
         lessonsByChapter: {},
         relations: [],
+        relationsByChapter: {},
+        draftPhaseByChapter: Object.fromEntries(baseSections.map((s) => [s.id, 'ready' as const])),
+        needsRebaseByChapter: {},
+        publishedMasterVersionByChapter: Object.fromEntries(baseSections.map((s) => [s.id, 1])),
+        coursePublished: Boolean(course?.published),
         relationRevision: 2,
         masterVersion: 1,
       });
@@ -183,6 +196,11 @@ function ensureAuthoringState(courseId: string): AuthoringState {
         outlineRevision: 1,
         lessonsByChapter: {},
         relations: [],
+        relationsByChapter: {},
+        draftPhaseByChapter: {},
+        needsRebaseByChapter: {},
+        publishedMasterVersionByChapter: {},
+        coursePublished: false,
         relationRevision: 1,
         masterVersion: 0,
       });
@@ -190,6 +208,10 @@ function ensureAuthoringState(courseId: string): AuthoringState {
     persistAuthoring();
   }
   const st = authoringStore.get(courseId)!;
+  if (!st.relationsByChapter) st.relationsByChapter = {};
+  if (!st.draftPhaseByChapter) st.draftPhaseByChapter = {};
+  if (!st.needsRebaseByChapter) st.needsRebaseByChapter = {};
+  if (!st.publishedMasterVersionByChapter) st.publishedMasterVersionByChapter = {};
   let migrated = false;
   const replaceSessionTerm = (s: string) =>
     s
@@ -1570,6 +1592,9 @@ export const mockApi = {
       edges: cloned.edges.map((e) => ({ ...e, properties: { ...(e.properties ?? {}) } })),
     }, 60);
   },
+  listGraphDrafts(_courseId: string): Promise<CourseGraphDraftSummary[]> {
+    return wait([], 40);
+  },
   async generateKnowledgeGraph(courseId: string): Promise<KnowledgeGraphData> {
     const generated = await ensureKnowledgeGraph(courseId, true);
     // Mark nodes and edges as proposed/draft as per FR01 / Bảng 2.2.7
@@ -1929,6 +1954,7 @@ export const mockApi = {
     if (nodeEditorStore[nodeId]) {
       return wait({
         ...nodeEditorStore[nodeId],
+        chapterTitle: nodeEditorStore[nodeId].chapterTitle ?? `Chương ${nodeEditorStore[nodeId].week ?? 1}`,
         contents: nodeEditorStore[nodeId].contents.map((c) => ({ ...c })),
         questions: nodeEditorStore[nodeId].questions.map((q) => ({ ...q })),
       });
@@ -1939,6 +1965,13 @@ export const mockApi = {
       if (found) {
         built.name = found.name || built.name;
         if (found.description) built.description = found.description;
+        const props = (found.properties ?? {}) as Record<string, unknown>;
+        const wk = Number(props.week ?? props.default_week ?? 1);
+        const chT = typeof props.chapter_title === 'string' && props.chapter_title.trim() ? props.chapter_title.trim() : `Chương ${wk}`;
+        built.week = wk;
+        built.chapterTitle = chT;
+        built.cluster = chT;
+        built.parentNode = chT;
         break;
       }
     }
@@ -1974,6 +2007,215 @@ export const mockApi = {
     }
     return wait(updated);
   },
+  async getCourseConceptsContentOverview(courseId: string): Promise<CourseConceptsContentOverview> {
+    const kg = await ensureKnowledgeGraph(courseId);
+    const conceptNodes = kg.nodes.filter((n) => n.type === 'Concept');
+    const items = conceptNodes.map((n) => {
+      const editor = nodeEditorStore[n.id];
+      const contents = editor?.contents ?? [];
+      const approvedCnt = contents.filter((c) => c.status === 'approved').length;
+      const quizzes = quizFixtures
+        .map((f) => f.quiz)
+        .filter((q) => q.courseId === courseId && q.conceptId === n.id);
+      const pubQuiz = quizzes.find((q) => q.status === 'published');
+      const primary = pubQuiz ?? quizzes[0];
+      const props = (n.properties ?? {}) as Record<string, unknown>;
+      const week = Number(props.week ?? props.default_week ?? 1);
+      const rawChTitle = typeof props.chapter_title === 'string' && props.chapter_title.trim() ? props.chapter_title.trim() : '';
+      const chapterTitle = rawChTitle && !/^Tuần\s+\d+$/i.test(rawChTitle) ? rawChTitle : `Chương ${week}`;
+      const durationMin = Number(props.duration_min ?? 6);
+      const hasContent = approvedCnt > 0 || Boolean(props.has_content);
+      const hasQuiz = (Boolean(pubQuiz) && (pubQuiz?.questions.length ?? 0) > 0) || Boolean(props.has_quiz);
+      return {
+        id: n.id,
+        code: String(props.code ?? n.id),
+        name: editor?.name ?? n.name,
+        week,
+        chapterTitle,
+        durationMin,
+        contentVersion: editor?.contentVersion ?? 1,
+        learningOutcomes: [] as string[],
+        contentCount: contents.length,
+        approvedContentCount: approvedCnt,
+        itemCount: primary?.questions.length ?? 0,
+        approvedItemCount: primary?.questions.length ?? 0,
+        quizCount: quizzes.length,
+        publishedQuizCount: quizzes.filter((q) => q.status === 'published').length,
+        primaryQuizId: primary?.id ?? null,
+        primaryQuizTitle: primary?.title ?? null,
+        primaryQuizStatus: primary?.status ?? ('none' as const),
+        primaryQuizQuestionCount: primary?.questions.length ?? 0,
+        hasContent,
+        hasQuiz,
+        isComplete: hasContent && hasQuiz,
+      };
+    });
+    return wait({
+      courseId,
+      totalConcepts: items.length,
+      conceptsWithContent: items.filter((i) => i.contentCount > 0).length,
+      conceptsWithApprovedContent: items.filter((i) => i.hasContent).length,
+      conceptsWithQuiz: items.filter((i) => i.quizCount > 0).length,
+      conceptsWithPublishedQuiz: items.filter((i) => i.hasQuiz).length,
+      completedConcepts: items.filter((i) => i.isComplete).length,
+      concepts: items,
+    });
+  },
+  updateConceptMetadata(nodeId: string, input: { title?: string; durationMin?: number }): Promise<NodeEditorData> {
+    const current = nodeEditorStore[nodeId] ?? data.buildNodeEditor(nodeId);
+    const updated: NodeEditorData = {
+      ...current,
+      name: input.title?.trim() || current.name,
+      durationMin: input.durationMin ?? current.durationMin ?? 6,
+    };
+    nodeEditorStore[nodeId] = updated;
+    persistNodeEditors();
+    return wait(updated);
+  },
+  upsertNodeContent(
+    nodeId: string,
+    input: {
+      id?: string | null;
+      title: string;
+      role: 'definition' | 'example';
+      bodyText?: string | null;
+      url?: string | null;
+      pageFrom?: number | null;
+      pageTo?: number | null;
+      status: 'draft' | 'approved';
+    },
+  ): Promise<ContentItem> {
+    const current = nodeEditorStore[nodeId] ?? data.buildNodeEditor(nodeId);
+    const existing = input.id ? current.contents.find((c) => c.id === input.id) : undefined;
+    const item: ContentItem = {
+      id: existing?.id ?? `cnt-${Date.now()}`,
+      kind: input.role === 'example' ? 'Example' : 'Definition',
+      role: input.role,
+      status: input.status,
+      title: input.title.trim(),
+      bodyText: input.bodyText ?? '',
+      url: input.url ?? null,
+      pageFrom: input.pageFrom ?? null,
+      pageTo: input.pageFrom != null ? (input.pageTo ?? input.pageFrom) : null,
+      contentVersion: (existing?.contentVersion ?? 0) + 1,
+      source: input.url?.trim() || (input.pageFrom ? `Trang ${input.pageFrom}-${input.pageTo ?? input.pageFrom}` : 'Giảng viên'),
+    };
+    current.contents = existing
+      ? current.contents.map((c) => (c.id === existing.id ? item : c))
+      : [...current.contents, item];
+    nodeEditorStore[nodeId] = current;
+    persistNodeEditors();
+    return wait(item);
+  },
+  deleteNodeContent(nodeId: string, contentId: string): Promise<void> {
+    const current = nodeEditorStore[nodeId] ?? data.buildNodeEditor(nodeId);
+    current.contents = current.contents.filter((c) => c.id !== contentId);
+    nodeEditorStore[nodeId] = current;
+    persistNodeEditors();
+    return wait(undefined);
+  },
+  getContentHistory(contentId: string): Promise<ContentHistoryItem[]> {
+    for (const ed of Object.values(nodeEditorStore)) {
+      const found = ed.contents.find((c) => c.id === contentId);
+      if (found) {
+        return wait([
+          {
+            contentId: found.id,
+            title: found.title,
+            role: found.role ?? 'definition',
+            bodyText: found.bodyText ?? '',
+            contentVersion: found.contentVersion ?? 1,
+            status: found.status,
+            isArchived: false,
+            archivedAt: null,
+          },
+        ]);
+      }
+    }
+    return wait([]);
+  },
+  deleteNodeItem(nodeId: string, itemId: string): Promise<void> {
+    const current = nodeEditorStore[nodeId] ?? data.buildNodeEditor(nodeId);
+    current.questions = current.questions.filter((q) => q.id !== itemId);
+    nodeEditorStore[nodeId] = current;
+    persistNodeEditors();
+    return wait(undefined);
+  },
+  upsertConceptQuiz(nodeId: string, input: UpsertConceptQuizInput): Promise<ConceptQuiz> {
+    const ed = nodeEditorStore[nodeId] ?? data.buildNodeEditor(nodeId);
+    let courseId = ed.courseId ?? '';
+    if (!courseId) {
+      for (const [cid, kg] of knowledgeGraphStore.entries()) {
+        if (kg.nodes.some((n) => n.id === nodeId)) {
+          courseId = cid;
+          break;
+        }
+      }
+    }
+    const existingFixture = input.quizId
+      ? quizFixtures.find((f) => f.quiz.id === input.quizId)
+      : quizFixtures.find((f) => f.quiz.conceptId === nodeId);
+    const quizId = existingFixture?.quiz.id ?? `quiz-concept-${Date.now()}`;
+    const mappedQuestions = input.questions.map((q, idx) => ({
+      id: q.id || `q-${quizId}-${idx + 1}`,
+      prompt: q.prompt,
+      options: q.options,
+      correctOptionId: q.correctOptionId,
+      explanation: q.explanation ?? '',
+      bloomLevel: q.bloomLevel,
+      points: q.points,
+      status: q.status,
+      itemVersion: 1,
+    }));
+    const answerKey = Object.fromEntries(mappedQuestions.map((q) => [q.id, q.correctOptionId]));
+    const quiz: Quiz = {
+      id: quizId,
+      courseId: courseId || 'CS101',
+      conceptId: nodeId,
+      title: input.title,
+      description: input.description,
+      quizType: 'micro_lesson',
+      timeLimitMinutes: input.timeLimitMinutes,
+      attemptsAllowed: input.attemptsAllowed,
+      attemptsUsed: existingFixture?.quiz.attemptsUsed ?? 0,
+      passScorePct: input.passScorePct,
+      status: input.status,
+      questions: mappedQuestions.map(({ id, prompt, options }) => ({ id, prompt, options })),
+    };
+    if (existingFixture) {
+      existingFixture.quiz = quiz;
+      existingFixture.answerKey = answerKey;
+    } else {
+      quizFixtures.unshift({ quiz, answerKey });
+    }
+    const result: ConceptQuiz = {
+      id: quiz.id,
+      courseId: quiz.courseId,
+      conceptId: nodeId,
+      title: quiz.title,
+      description: quiz.description,
+      quizType: quiz.quizType,
+      timeLimitMinutes: quiz.timeLimitMinutes,
+      attemptsAllowed: quiz.attemptsAllowed,
+      passScorePct: input.passScorePct,
+      status: quiz.status,
+      questions: mappedQuestions,
+    };
+    ed.quizzes = [result, ...(ed.quizzes ?? []).filter((qz) => qz.id !== result.id)];
+    nodeEditorStore[nodeId] = ed;
+    persistNodeEditors();
+    return wait(result);
+  },
+  deleteConceptQuiz(nodeId: string, quizId: string): Promise<void> {
+    const idx = quizFixtures.findIndex((f) => f.quiz.id === quizId && f.quiz.conceptId === nodeId);
+    if (idx >= 0) quizFixtures.splice(idx, 1);
+    const ed = nodeEditorStore[nodeId];
+    if (ed?.quizzes) {
+      ed.quizzes = ed.quizzes.filter((qz) => qz.id !== quizId);
+      persistNodeEditors();
+    }
+    return wait(undefined);
+  },
 
   /* ==================== D1–D5 Authoring Workflow Mock ==================== */
   async uploadCourseSyllabus(courseId: string, file: File): Promise<{ syllabusId: string }> {
@@ -2001,28 +2243,49 @@ export const mockApi = {
   getOutlineDraft(courseId: string): Promise<OutlineDraftResponse> {
     const state = ensureAuthoringState(courseId);
     const outline: CourseOutlineData = JSON.parse(JSON.stringify(state.outline));
+    const weekRelations = (chId: string): CourseRelationItem[] => {
+      if (state.relationsByChapter && state.relationsByChapter[chId]) {
+        return state.relationsByChapter[chId];
+      }
+      return state.relations.filter((r) => r.sourceChapterId === chId || r.targetChapterId === chId);
+    };
     outline.chapters = outline.chapters.map((ch) => {
       const lessons = (state.lessonsByChapter[ch.id] ?? []).filter((l) => l.decision !== 'REJECT');
-      const weekRels = state.relations.filter(
-        (r) => r.sourceChapterId === ch.id || r.targetChapterId === ch.id,
-      );
+      const weekRels = weekRelations(ch.id);
+      const draftPhase =
+        state.draftPhaseByChapter?.[ch.id] ??
+        (ch.state === 'PUBLISHED'
+          ? 'ready'
+          : weekRels.length > 0
+            ? 'ready'
+            : ch.state === 'LESSON_APPROVED'
+              ? 'nodes_reviewed'
+              : lessons.length > 0
+                ? 'nodes'
+                : null);
       return {
         ...ch,
-        conceptCount: ch.conceptCount ?? lessons.length,
-        relationCount: ch.relationCount ?? weekRels.length,
-        relationApprovedCount:
-          ch.relationApprovedCount ??
-          weekRels.filter((r) => r.decision === 'APPROVE' || r.decision === 'EDIT').length,
-        relationPendingCount:
-          ch.relationPendingCount ?? weekRels.filter((r) => r.decision === 'PENDING').length,
-        relationWarnCount: ch.relationWarnCount ?? weekRels.filter((r) => r.hasWarning).length,
+        rawState: ch.state === 'PUBLISHED' ? 'approved' : undefined,
+        mergedInMaster: ch.state === 'PUBLISHED',
+        draftPhase,
+        needsRebase: Boolean(state.needsRebaseByChapter?.[ch.id]),
+        publishedMasterVersion: state.publishedMasterVersionByChapter?.[ch.id] ?? (ch.state === 'PUBLISHED' ? state.masterVersion : null),
+        conceptCount: lessons.length,
+        relationCount: weekRels.length,
+        relationApprovedCount: weekRels.filter((r) => r.decision === 'APPROVE' || r.decision === 'EDIT').length,
+        relationPendingCount: weekRels.filter((r) => r.decision === 'PENDING').length,
+        relationWarnCount: weekRels.filter((r) => r.hasWarning).length,
       };
     });
+    const publishedWeekCount = outline.chapters.filter((c) => c.mergedInMaster).length;
     return wait({
       outline,
       state: state.outlineState,
       revision: state.outlineRevision,
       masterVersion: state.masterVersion,
+      publishedWeekCount,
+      coursePublished: Boolean(state.coursePublished),
+      latestReleaseNo: state.coursePublished ? Math.max(1, state.masterVersion) : 0,
       activeJob: null,
     });
   },
@@ -2031,6 +2294,7 @@ export const mockApi = {
     const nodes: KnowledgeGraphNode[] = [];
     const edges: KnowledgeGraphEdge[] = [];
     const seenNodes = new Set<string>();
+    const seenEdges = new Set<string>();
     for (const lo of state.outline.learningOutcomes) {
       const loId = `${courseId}:lo:${lo.code}`;
       seenNodes.add(loId);
@@ -2038,6 +2302,7 @@ export const mockApi = {
     }
     for (const ch of state.outline.chapters) {
       const lessons = (state.lessonsByChapter[ch.id] ?? []).filter((l) => l.decision !== 'REJECT');
+      const isMerged = ch.state === 'PUBLISHED';
       for (const l of lessons) {
         if (!seenNodes.has(l.id)) {
           seenNodes.add(l.id);
@@ -2051,25 +2316,46 @@ export const mockApi = {
               chapter_id: ch.id,
               chapter_title: ch.title,
               level: l.level ?? 'lesson',
-              scope: ch.state === 'PUBLISHED' ? 'master' : 'draft',
+              scope: isMerged ? 'master' : 'draft',
               status: l.decision === 'APPROVE' || l.decision === 'EDIT' ? 'approved' : 'proposed',
             },
           });
         }
         for (const loCode of l.loCodes) {
           const loId = `${courseId}:lo:${loCode}`;
-          if (seenNodes.has(loId)) {
-            edges.push({ source: l.id, target: loId, type: 'DEVELOP', properties: { scope: ch.state === 'PUBLISHED' ? 'master' : 'draft', week_id: ch.id } });
+          const devKey = `${l.id}|${loId}|DEVELOP`;
+          if (seenNodes.has(loId) && !seenEdges.has(devKey)) {
+            seenEdges.add(devKey);
+            edges.push({ source: l.id, target: loId, type: 'DEVELOP', properties: { scope: isMerged ? 'master' : 'draft', week_id: ch.id } });
           }
         }
       }
     }
-    for (const r of state.relations.filter((x) => x.decision !== 'REJECT')) {
+    const allRels = [
+      ...Object.entries(state.relationsByChapter ?? {}).flatMap(([wk, list]) =>
+        list.map((r) => ({ rel: r, wk })),
+      ),
+      ...state.relations.map((r) => ({ rel: r, wk: r.sourceChapterId })),
+    ];
+    const mergedIds = new Set(state.outline.chapters.filter((c) => c.state === 'PUBLISHED').map((c) => c.id));
+    for (const { rel: r, wk } of allRels) {
+      if (r.decision === 'REJECT') continue;
+      const eKey = `${r.sourceId}|${r.targetId}|${r.relationType}`;
+      if (seenEdges.has(eKey)) continue;
+      seenEdges.add(eKey);
+      const isMaster = mergedIds.has(wk);
       edges.push({
         source: r.sourceId,
         target: r.targetId,
         type: r.relationType,
-        properties: { scope: 'draft', week_id: r.sourceChapterId, reason: r.reason ?? '', required_knowledge: r.requiredKnowledge ?? '', status: r.decision === 'APPROVE' || r.decision === 'EDIT' ? 'approved' : 'proposed' },
+        properties: {
+          scope: isMaster ? 'master' : 'draft',
+          week_id: wk,
+          reason: r.reason ?? '',
+          required_knowledge: r.requiredKnowledge ?? '',
+          strength: r.strength ?? null,
+          status: r.decision === 'APPROVE' || r.decision === 'EDIT' ? 'approved' : 'proposed',
+        },
       });
     }
     if (nodes.length === 0) {
@@ -2230,7 +2516,7 @@ export const mockApi = {
       return Promise.reject(new Error('409: Revision buổi học đã thay đổi.'));
     }
     const list = state.lessonsByChapter[chapterId] ?? [];
-    const fallbackSlide = input.slideId || list[0]?.sourceRef || `${chapterId}_p1`;
+    const fallbackSlide = input.slideId || list[0]?.sourceRef || ((ch.documentCount ?? 0) > 0 ? `${chapterId}_p1` : '');
     const created: ChapterLessonItem = {
       id: `manual_${Date.now()}`,
       title: input.title.trim(),
@@ -2242,12 +2528,15 @@ export const mockApi = {
       level: input.level ?? 'lesson',
       durationMin: input.durationMin,
       confidence: 1,
-      evidence: [{ slideId: fallbackSlide, quote: input.content.trim() || input.title.trim() }],
+      evidence: fallbackSlide
+        ? [{ slideId: fallbackSlide, quote: input.content.trim() || input.title.trim() }]
+        : [],
       reuseId: null,
       decision: 'APPROVE',
       reviewNote: input.reviewNote ?? 'Giảng viên bổ sung thủ công',
     };
     state.lessonsByChapter[chapterId] = [...list, created];
+    if (ch.state === 'DRAFT') ch.state = 'LESSON_REVIEW';
     ch.revision += 1;
     persistAuthoring();
     return wait({ lesson: { ...created }, revision: ch.revision }, 50);
@@ -2310,6 +2599,8 @@ export const mockApi = {
       return Promise.reject(new Error('422: Mọi bài học trong buổi học phải có quyết định (APPROVE / EDIT / REJECT) trước khi duyệt.'));
     }
     ch.state = 'LESSON_APPROVED';
+    if (!state.draftPhaseByChapter) state.draftPhaseByChapter = {};
+    state.draftPhaseByChapter[chapterId] = 'nodes_reviewed';
     ch.revision += 1;
     persistAuthoring();
     return wait({ state: 'LESSON_APPROVED', revision: ch.revision });
@@ -2322,6 +2613,8 @@ export const mockApi = {
       return Promise.reject(new Error('409: Revision buổi học đã thay đổi.'));
     }
     state.lessonsByChapter[chapterId] = [];
+    if (state.relationsByChapter) delete state.relationsByChapter[chapterId];
+    if (state.draftPhaseByChapter) state.draftPhaseByChapter[chapterId] = null;
     ch.state = 'DRAFT';
     ch.revision += 1;
     persistAuthoring();
@@ -2336,23 +2629,24 @@ export const mockApi = {
   ): Promise<{ jobId: string; status: string }> {
     const state = ensureAuthoringState(courseId);
     const uniqueIds = Array.from(new Set(chapterIds));
-    if (uniqueIds.length < 2) {
-      return Promise.reject(new Error('422 MIN_TWO_CHAPTERS_REQUIRED: Cần chọn ít nhất 2 buổi học đã duyệt để sinh quan hệ giữa các buổi học.'));
+    if (uniqueIds.length < 1) {
+      return Promise.reject(new Error('422: Cần chọn ít nhất 1 buổi học đã duyệt để sinh quan hệ.'));
     }
     const unapproved = uniqueIds.filter((cid) => {
       const ch = state.outline.chapters.find((c) => c.id === cid);
       return !ch || (ch.state !== 'LESSON_APPROVED' && ch.state !== 'PUBLISHED');
     });
     if (unapproved.length) {
-      return Promise.reject(new Error('409: Tất cả các buổi học được chọn phải ở trạng thái LESSON_APPROVED.'));
+      return Promise.reject(new Error('409: Buổi học được chọn phải ở trạng thái LESSON_APPROVED.'));
     }
-    if (state.relationRevision !== expectedRevision) {
-      return Promise.reject(new Error('409: Revision quan hệ đã thay đổi.'));
+    if (state.relationRevision !== expectedRevision && !state.outline.chapters.some((c) => c.id === uniqueIds[0] && c.revision === expectedRevision)) {
+      // Keep mock resilient to per-chapter or course-level revision tracking
     }
-    const jobId = `job-relation-${courseId}-${Date.now()}`;
+    const jobId = `job-relation-${courseId}-${uniqueIds[0]}-${Date.now()}`;
     authoringJobs.set(jobId, {
       kind: 'relation',
       courseId,
+      chapterId: uniqueIds[0],
       chapterIds: uniqueIds,
       idempotencyKey,
       polls: 0,
@@ -2370,6 +2664,7 @@ export const mockApi = {
     courseId: string,
     cursor?: string | null,
     limit = 20,
+    weekId?: string,
   ): Promise<{
     items: CourseRelationItem[];
     nextCursor: string | null;
@@ -2377,13 +2672,27 @@ export const mockApi = {
     endpoints?: RelationEndpointOption[];
   }> {
     const state = ensureAuthoringState(courseId);
+    const targetWeek = weekId || state.outline.chapters[0]?.id || '1';
+    const list = state.relationsByChapter?.[targetWeek] ?? state.relations.filter((r) => r.sourceChapterId === targetWeek || r.targetChapterId === targetWeek);
     const offset = cursor ? Number(cursor) || 0 : 0;
-    const slice = state.relations.slice(offset, offset + limit);
-    const nextCursor = offset + limit < state.relations.length ? String(offset + limit) : null;
-    const endpoints: RelationEndpointOption[] = Object.values(state.lessonsByChapter)
-      .flat()
-      .filter((l) => l.decision !== 'REJECT')
-      .map((l) => ({ id: l.id, name: l.title, inDraft: true, level: l.level ?? 'lesson' }));
+    const slice = list.slice(offset, offset + limit);
+    const nextCursor = offset + limit < list.length ? String(offset + limit) : null;
+    const endpoints: RelationEndpointOption[] = [];
+    for (const ch of state.outline.chapters) {
+      const isTarget = ch.id === targetWeek;
+      const isMerged = ch.state === 'PUBLISHED';
+      if (!isTarget && !isMerged) continue;
+      for (const l of (state.lessonsByChapter[ch.id] ?? []).filter((x) => x.decision !== 'REJECT')) {
+        endpoints.push({
+          id: l.id,
+          name: l.title,
+          inDraft: isTarget,
+          level: l.level ?? 'lesson',
+          canonicalId: l.id,
+          weekId: ch.id,
+        });
+      }
+    }
     return wait(
       { items: slice.map((r) => ({ ...r })), nextCursor, revision: state.relationRevision, endpoints },
       60,
@@ -2393,27 +2702,38 @@ export const mockApi = {
     courseId: string,
     relationId: string,
     input: { decision: ReviewDecision; changes?: Partial<CourseRelationItem>; reviewNote?: string; expectedRevision: number },
+    weekId?: string,
   ): Promise<{ relation: CourseRelationItem; revision: number }> {
     const state = ensureAuthoringState(courseId);
-    if (state.relationRevision !== input.expectedRevision) {
-      return Promise.reject(new Error('409: Revision quan hệ đã thay đổi.'));
-    }
-    const target = state.relations.find((r) => r.id === relationId);
+    const targetWeek = weekId || state.outline.chapters[0]?.id || '1';
+    const weekList = state.relationsByChapter?.[targetWeek] ?? state.relations;
+    const target = weekList.find((r) => r.id === relationId) ?? state.relations.find((r) => r.id === relationId);
     if (!target) return Promise.reject(new Error('Không tìm thấy quan hệ.'));
     target.decision = input.decision;
     if (input.reviewNote !== undefined) target.reviewNote = input.reviewNote;
-    const allLessons = Object.values(state.lessonsByChapter).flat();
+    const allLessonsByCh = Object.entries(state.lessonsByChapter).flatMap(([chId, arr]) =>
+      arr.map((l) => ({ ...l, chId })),
+    );
     if (input.changes?.sourceId) {
       target.sourceId = input.changes.sourceId;
-      target.sourceName =
-        allLessons.find((l) => l.id === input.changes?.sourceId)?.title ?? target.sourceName;
+      const found = allLessonsByCh.find((l) => l.id === input.changes?.sourceId);
+      if (found) {
+        target.sourceName = found.title;
+        target.sourceChapterId = found.chId;
+      }
     }
     if (input.changes?.targetId) {
       target.targetId = input.changes.targetId;
-      target.targetName =
-        allLessons.find((l) => l.id === input.changes?.targetId)?.title ?? target.targetName;
+      const found = allLessonsByCh.find((l) => l.id === input.changes?.targetId);
+      if (found) {
+        target.targetName = found.title;
+        target.targetChapterId = found.chId;
+      }
     }
     if (input.changes?.relationType) target.relationType = input.changes.relationType;
+    if (input.changes?.strength !== undefined) {
+      target.strength = target.relationType === 'PREREQUISITE' ? input.changes.strength : null;
+    }
     if (input.changes?.reason !== undefined) target.reason = input.changes.reason;
     if (input.changes?.requiredKnowledge !== undefined) {
       target.requiredKnowledge = input.changes.requiredKnowledge;
@@ -2428,28 +2748,31 @@ export const mockApi = {
       sourceId: string;
       targetId: string;
       relationType: 'PREREQUISITE' | 'PART_OF' | 'RELATED_TO';
+      strength?: 'hard' | 'soft' | null;
       reason: string;
       requiredKnowledge?: string;
       reviewNote?: string;
       expectedRevision: number;
     },
+    weekId?: string,
   ): Promise<{ relation: CourseRelationItem; revision: number }> {
     const state = ensureAuthoringState(courseId);
-    if (state.relationRevision !== input.expectedRevision) {
-      return Promise.reject(new Error('409: Revision quan hệ đã thay đổi.'));
-    }
-    const allLessons = Object.values(state.lessonsByChapter).flat();
-    const srcName = allLessons.find((l) => l.id === input.sourceId)?.title ?? input.sourceId;
-    const tgtName = allLessons.find((l) => l.id === input.targetId)?.title ?? input.targetId;
+    const targetWeek = weekId || state.outline.chapters[0]?.id || '1';
+    const allLessonsByCh = Object.entries(state.lessonsByChapter).flatMap(([chId, arr]) =>
+      arr.map((l) => ({ ...l, chId })),
+    );
+    const srcNode = allLessonsByCh.find((l) => l.id === input.sourceId);
+    const tgtNode = allLessonsByCh.find((l) => l.id === input.targetId);
     const created: CourseRelationItem = {
       id: `manual_rel_${Date.now()}`,
       sourceId: input.sourceId,
-      sourceName: srcName,
-      sourceChapterId: state.outline.chapters[0]?.id ?? '1',
+      sourceName: srcNode?.title ?? input.sourceId,
+      sourceChapterId: srcNode?.chId ?? targetWeek,
       targetId: input.targetId,
-      targetName: tgtName,
-      targetChapterId: state.outline.chapters[0]?.id ?? '1',
+      targetName: tgtNode?.title ?? input.targetId,
+      targetChapterId: tgtNode?.chId ?? targetWeek,
       relationType: input.relationType,
+      strength: input.relationType === 'PREREQUISITE' ? (input.strength ?? 'hard') : null,
       sourceRef: '',
       reason: input.reason || 'Giảng viên bổ sung thủ công',
       requiredKnowledge:
@@ -2458,7 +2781,11 @@ export const mockApi = {
       decision: 'APPROVE',
       reviewNote: input.reviewNote ?? 'Giảng viên thêm quan hệ thủ công',
     };
+    if (!state.relationsByChapter) state.relationsByChapter = {};
+    state.relationsByChapter[targetWeek] = [...(state.relationsByChapter[targetWeek] ?? []), created];
     state.relations.push(created);
+    if (!state.draftPhaseByChapter) state.draftPhaseByChapter = {};
+    state.draftPhaseByChapter[targetWeek] = 'ready';
     state.relationRevision += 1;
     persistAuthoring();
     return wait({ relation: { ...created }, revision: state.relationRevision }, 50);
@@ -2466,11 +2793,13 @@ export const mockApi = {
   deleteCourseRelation(
     courseId: string,
     relationId: string,
-    expectedRevision: number,
+    _expectedRevision: number,
+    weekId?: string,
   ): Promise<{ deleted: boolean; revision: number }> {
     const state = ensureAuthoringState(courseId);
-    if (state.relationRevision !== expectedRevision) {
-      return Promise.reject(new Error('409: Revision quan hệ đã thay đổi.'));
+    const targetWeek = weekId || state.outline.chapters[0]?.id || '1';
+    if (state.relationsByChapter?.[targetWeek]) {
+      state.relationsByChapter[targetWeek] = state.relationsByChapter[targetWeek].filter((r) => r.id !== relationId);
     }
     state.relations = state.relations.filter((r) => r.id !== relationId);
     state.relationRevision += 1;
@@ -2483,14 +2812,14 @@ export const mockApi = {
       items: Array<{ relationId: string; decision: ReviewDecision; changes?: Partial<CourseRelationItem>; reviewNote?: string }>;
       expectedRevision: number;
     },
+    weekId?: string,
   ): Promise<{ updatedCount: number; revision: number }> {
     const state = ensureAuthoringState(courseId);
-    if (state.relationRevision !== input.expectedRevision) {
-      return Promise.reject(new Error('409: Revision quan hệ đã thay đổi.'));
-    }
+    const targetWeek = weekId || state.outline.chapters[0]?.id || '1';
+    const weekList = state.relationsByChapter?.[targetWeek] ?? state.relations;
     let updatedCount = 0;
     for (const item of input.items) {
-      const target = state.relations.find((r) => r.id === item.relationId);
+      const target = weekList.find((r) => r.id === item.relationId) ?? state.relations.find((r) => r.id === item.relationId);
       if (target) {
         target.decision = item.decision;
         if (item.reviewNote !== undefined) target.reviewNote = item.reviewNote;
@@ -2501,15 +2830,267 @@ export const mockApi = {
     persistAuthoring();
     return wait({ updatedCount, revision: state.relationRevision }, 60);
   },
-  discardCourseRelations(courseId: string, expectedRevision: number): Promise<{ revision: number }> {
+  discardCourseRelations(courseId: string, _expectedRevision: number, weekId?: string): Promise<{ revision: number }> {
     const state = ensureAuthoringState(courseId);
-    if (state.relationRevision !== expectedRevision) {
-      return Promise.reject(new Error('409: Revision quan hệ đã thay đổi.'));
+    if (weekId) {
+      if (state.relationsByChapter) state.relationsByChapter[weekId] = [];
+      if (state.draftPhaseByChapter) state.draftPhaseByChapter[weekId] = 'nodes_reviewed';
+      state.relations = state.relations.filter((r) => r.sourceChapterId !== weekId && r.targetChapterId !== weekId);
+    } else {
+      state.relationsByChapter = {};
+      state.relations = [];
     }
-    state.relations = [];
     state.relationRevision += 1;
     persistAuthoring();
     return wait({ revision: state.relationRevision });
+  },
+  rebaseWeek(
+    courseId: string,
+    weekId: string,
+    _expectedRevision: number,
+  ): Promise<{ weekId: string; revision: number; masterVersion: number }> {
+    const state = ensureAuthoringState(courseId);
+    if (!state.needsRebaseByChapter) state.needsRebaseByChapter = {};
+    state.needsRebaseByChapter[weekId] = false;
+    state.relationRevision += 1;
+    persistAuthoring();
+    return wait({ weekId, revision: state.relationRevision, masterVersion: state.masterVersion }, 60);
+  },
+  publishWeekToMaster(
+    courseId: string,
+    weekId: string,
+    _expectedRevision: number,
+  ): Promise<{ state: 'PUBLISHED'; weekId: string; revision: number; masterVersion: number }> {
+    const state = ensureAuthoringState(courseId);
+    const ch = state.outline.chapters.find((c) => c.id === weekId);
+    if (!ch) return Promise.reject(new Error('Không tìm thấy buổi học để hợp nhất vào Bản tạm.'));
+    const weekRels = state.relationsByChapter?.[weekId] ?? [];
+    if (weekRels.some((r) => r.decision === 'PENDING')) {
+      return Promise.reject(new Error('422: Vẫn còn quan hệ ở trạng thái Chờ duyệt (PENDING).'));
+    }
+    ch.state = 'PUBLISHED';
+    if (!state.draftPhaseByChapter) state.draftPhaseByChapter = {};
+    state.draftPhaseByChapter[weekId] = 'ready';
+    if (!state.needsRebaseByChapter) state.needsRebaseByChapter = {};
+    state.needsRebaseByChapter[weekId] = false;
+    state.masterVersion = Math.max(1, state.masterVersion) + 1;
+    if (!state.publishedMasterVersionByChapter) state.publishedMasterVersionByChapter = {};
+    state.publishedMasterVersionByChapter[weekId] = state.masterVersion;
+    for (const other of state.outline.chapters) {
+      if (other.id !== weekId && other.state !== 'PUBLISHED' && (state.lessonsByChapter[other.id]?.length ?? 0) > 0) {
+        state.needsRebaseByChapter[other.id] = true;
+      }
+    }
+    state.relationRevision += 1;
+    ch.revision = state.relationRevision;
+    persistAuthoring();
+    return wait({ state: 'PUBLISHED', weekId, revision: state.relationRevision, masterVersion: state.masterVersion }, 80);
+  },
+  listStep3Snapshots(courseId: string): Promise<Step3SnapshotSummary[]> {
+    const state = ensureAuthoringState(courseId);
+    return wait([...(state.snapshots ?? [])], 40);
+  },
+  getStep3Workspace(
+    courseId: string,
+    params: { focusWeekId: string; weekIds: string[]; snapshotId?: string | null },
+  ): Promise<Step3WorkspaceResponse> {
+    const state = ensureAuthoringState(courseId);
+    const snapshots = state.snapshots ?? [];
+    const selectedSnap =
+      params.snapshotId === null || params.snapshotId === 'none'
+        ? null
+        : params.snapshotId && params.snapshotId !== 'latest'
+          ? (snapshots.find((s) => s.draftId === params.snapshotId) ?? null)
+          : (snapshots[0] ?? null);
+
+    const validIds = new Set(state.outline.chapters.map((c) => c.id));
+    const selectedWeekIds = Array.from(
+      new Set([params.focusWeekId, ...(params.weekIds ?? [])].filter((id) => validIds.has(id))),
+    );
+    const nodes: KnowledgeGraphNode[] = [];
+    const nodeIds = new Set<string>();
+    const edges: KnowledgeGraphEdge[] = [];
+    const endpoints: RelationEndpointOption[] = [];
+
+    if (selectedSnap && state.snapshotGraphs?.[selectedSnap.draftId]) {
+      const sg = state.snapshotGraphs[selectedSnap.draftId];
+      for (const n of sg.nodes) {
+        if (!nodeIds.has(n.id)) {
+          nodeIds.add(n.id);
+          nodes.push({ ...n, properties: { ...(n.properties ?? {}), scope: 'master' } });
+          if (n.type === 'Concept') {
+            endpoints.push({
+              id: n.id,
+              name: n.name,
+              inDraft: false,
+              level: (n.properties?.level as 'topic' | 'lesson') ?? 'lesson',
+              canonicalId: n.id,
+              weekId: String(n.properties?.week_id ?? ''),
+            });
+          }
+        }
+      }
+      for (const e of sg.edges) {
+        edges.push({ ...e, properties: { ...(e.properties ?? {}), scope: 'master' } });
+      }
+    }
+
+    const relations: CourseRelationItem[] = [];
+    for (const wid of selectedWeekIds) {
+      const ch = state.outline.chapters.find((c) => c.id === wid);
+      for (const l of (state.lessonsByChapter[wid] ?? []).filter((x) => x.decision !== 'REJECT')) {
+        nodeIds.add(l.id);
+        const existingIdx = nodes.findIndex((x) => x.id === l.id);
+        const activeNode: KnowledgeGraphNode = {
+          id: l.id,
+          name: l.title,
+          type: 'Concept',
+          description: l.content,
+          properties: {
+            scope: 'active',
+            week_id: wid,
+            chapter_id: wid,
+            chapter_title: ch?.title ?? wid,
+            level: l.level ?? 'lesson',
+          },
+        };
+        if (existingIdx >= 0) nodes[existingIdx] = activeNode;
+        else nodes.push(activeNode);
+        const epIdx = endpoints.findIndex((x) => x.id === l.id);
+        const epObj: RelationEndpointOption = {
+          id: l.id,
+          name: l.title,
+          inDraft: true,
+          level: l.level ?? 'lesson',
+          canonicalId: l.id,
+          weekId: wid,
+        };
+        if (epIdx >= 0) endpoints[epIdx] = epObj;
+        else endpoints.push(epObj);
+      }
+      for (const r of state.relationsByChapter?.[wid] ?? []) {
+        if (nodeIds.has(r.sourceId) && nodeIds.has(r.targetId)) {
+          relations.push({ ...r });
+        }
+      }
+    }
+    return wait(
+      {
+        focusWeekId: params.focusWeekId,
+        selectedWeekIds,
+        baseSnapshot: selectedSnap,
+        snapshots: [...snapshots],
+        revision: state.relationRevision,
+        graph: { nodes, edges },
+        endpoints,
+        relations,
+      },
+      50,
+    );
+  },
+  saveStep3Snapshot(
+    courseId: string,
+    body: {
+      focusWeekId: string;
+      selectedWeekIds: string[];
+      baseSnapshotId?: string | null;
+      title?: string;
+      note?: string;
+      expectedRevision: number;
+    },
+  ): Promise<{ snapshot: Step3SnapshotSummary; snapshots: Step3SnapshotSummary[]; revision: number }> {
+    const state = ensureAuthoringState(courseId);
+    if (!state.snapshots) state.snapshots = [];
+    if (!state.snapshotGraphs) state.snapshotGraphs = {};
+    const baseSnap = body.baseSnapshotId
+      ? state.snapshots.find((s) => s.draftId === body.baseSnapshotId)
+      : undefined;
+    const baseGraph = baseSnap ? state.snapshotGraphs[baseSnap.draftId] : undefined;
+    const nodeMap = new Map<string, KnowledgeGraphNode>();
+    const edgeList: KnowledgeGraphEdge[] = [];
+    const seenEdge = new Set<string>();
+    (baseGraph?.nodes ?? []).forEach((n) => nodeMap.set(n.id, { ...n }));
+    (baseGraph?.edges ?? []).forEach((e) => {
+      const k = `${e.source}|${e.target}|${e.type}`;
+      if (!seenEdge.has(k)) {
+        seenEdge.add(k);
+        edgeList.push({ ...e });
+      }
+    });
+
+    const weekIds = Array.from(new Set([body.focusWeekId, ...(body.selectedWeekIds ?? [])]));
+    const includedSet = new Set<string>([...(baseSnap?.includedWeekIds ?? []), ...weekIds]);
+    for (const wid of weekIds) {
+      const ch = state.outline.chapters.find((c) => c.id === wid);
+      for (const l of (state.lessonsByChapter[wid] ?? []).filter((x) => x.decision !== 'REJECT')) {
+        nodeMap.set(l.id, {
+          id: l.id,
+          name: l.title,
+          type: 'Concept',
+          description: l.content,
+          properties: {
+            week_id: wid,
+            chapter_id: wid,
+            chapter_title: ch?.title ?? wid,
+            level: l.level ?? 'lesson',
+            scope: 'master',
+          },
+        });
+      }
+      for (const r of state.relationsByChapter?.[wid] ?? []) {
+        if (r.decision === 'REJECT') continue;
+        const k = `${r.sourceId}|${r.targetId}|${r.relationType}`;
+        if (nodeMap.has(r.sourceId) && nodeMap.has(r.targetId) && !seenEdge.has(k)) {
+          seenEdge.add(k);
+          edgeList.push({
+            source: r.sourceId,
+            target: r.targetId,
+            type: r.relationType,
+            properties: { scope: 'master', reason: r.reason ?? '' },
+          });
+        }
+      }
+    }
+
+    const nextRev = (state.snapshots[0]?.draftRevision ?? 0) + 1;
+    const draftId = `snap-${courseId}-${nextRev}-${Date.now()}`;
+    const includedWeekIds = state.outline.chapters
+      .map((c) => c.id)
+      .filter((id) => includedSet.has(id));
+    const snap: Step3SnapshotSummary = {
+      draftId,
+      courseId,
+      effectiveTermNo: 251,
+      draftRevision: nextRev,
+      baseRevision: state.snapshots[0]?.draftRevision ?? null,
+      status: 'approved',
+      title: body.title?.trim() || `Bản tạm v${nextRev} (${includedWeekIds.length} chương)`,
+      note: body.note ?? '',
+      createdAt: new Date().toISOString(),
+      includedWeekIds,
+      sourceWeekIds: weekIds,
+      baseSnapshotId: body.baseSnapshotId ?? null,
+      baseSnapshotRevision: baseSnap?.draftRevision ?? null,
+      nodeCount: nodeMap.size,
+      edgeCount: edgeList.length,
+      isStep3Snapshot: true,
+    };
+    state.snapshotGraphs[draftId] = { nodes: Array.from(nodeMap.values()), edges: edgeList };
+    state.snapshots.unshift(snap);
+    state.masterVersion = nextRev;
+    state.relationRevision += 1;
+    persistAuthoring();
+    return wait({ snapshot: snap, snapshots: [...state.snapshots], revision: state.relationRevision }, 60);
+  },
+  getPublicationStatus(courseId: string, publicationId: string): Promise<PublicationStatusResponse> {
+    const state = ensureAuthoringState(courseId);
+    return wait({
+      publicationId,
+      releaseNo: Math.max(1, state.masterVersion),
+      releaseStatus: 'PUBLISHED',
+      syncStatus: 'SYNCED',
+      canRecover: false,
+    }, 60);
   },
 
   publishCourseGraph(
@@ -2517,20 +3098,49 @@ export const mockApi = {
     expectedRevision: number,
     expectedMasterVersion: number,
     _idempotencyKey: string,
+    draftId?: string,
   ): Promise<PublishCourseResponse> {
     const state = ensureAuthoringState(courseId);
-    if (state.relationRevision !== expectedRevision || state.masterVersion !== expectedMasterVersion) {
+    if (!draftId && (state.relationRevision !== expectedRevision || state.masterVersion !== expectedMasterVersion)) {
       return Promise.reject(new Error('409: Phiên bản đồ thị hoặc masterVersion đã thay đổi.'));
     }
     const approvedChapters = state.outline.chapters.filter((c) => c.state === 'LESSON_APPROVED' || c.state === 'PUBLISHED');
-    if (state.outlineState !== 'OUTLINE_APPROVED' || approvedChapters.length === 0) {
+    if (!draftId && (state.outlineState !== 'OUTLINE_APPROVED' || approvedChapters.length === 0)) {
       return Promise.reject(new Error('422: Cần duyệt khung môn học và ít nhất 1 buổi học trước khi xuất bản Course Graph.'));
     }
-    if (state.relations.some((r) => r.decision === 'PENDING')) {
+    const allChapterRelations: CourseRelationItem[] = [];
+    const seenRelKeys = new Set<string>();
+    const addRel = (r: CourseRelationItem) => {
+      const k = `${r.sourceId}|${r.targetId}|${r.relationType}`;
+      if (!seenRelKeys.has(k)) {
+        seenRelKeys.add(k);
+        allChapterRelations.push(r);
+      }
+    };
+    for (const ch of approvedChapters) {
+      for (const r of state.relationsByChapter?.[ch.id] ?? []) addRel(r);
+    }
+    for (const r of state.relations) addRel(r);
+
+    if (!draftId && allChapterRelations.some((r) => r.decision === 'PENDING')) {
       return Promise.reject(new Error('422: Còn quan hệ giữa các buổi học chưa được duyệt (PENDING).'));
     }
 
     const course = teacherCoursesStore.find((c) => c.id === courseId);
+    if (draftId) {
+      state.masterVersion += 1;
+      state.coursePublished = true;
+      persistAuthoring();
+      const publicationId = `pub-${courseId}-${state.masterVersion}`;
+      return wait({
+        state: 'PUBLISHED',
+        revision: expectedRevision,
+        masterVersion: state.masterVersion,
+        warnings: [],
+        publicationId,
+      });
+    }
+
     const nodes: KnowledgeGraphNode[] = [
       {
         id: courseId,
@@ -2570,14 +3180,15 @@ export const mockApi = {
       });
     }
 
-    for (const rel of state.relations.filter((r) => r.decision !== 'REJECT')) {
+    for (const rel of allChapterRelations.filter((r) => r.decision !== 'REJECT')) {
       edges.push({
         source: rel.sourceId,
         target: rel.targetId,
         type: rel.relationType,
-        properties: { status: 'approved', sourceRef: rel.sourceRef },
+        properties: { status: 'approved', sourceRef: rel.sourceRef, strength: rel.strength ?? undefined },
       });
     }
+    state.relations = allChapterRelations;
 
     knowledgeGraphStore.set(courseId, { nodes, edges });
     persistKnowledgeGraph();
@@ -2591,6 +3202,7 @@ export const mockApi = {
 
     state.masterVersion += 1;
     state.relationRevision += 1;
+    state.coursePublished = true;
     persistAuthoring();
     const publicationId = `pub-${courseId}-${state.masterVersion}`;
     return wait({
@@ -2720,35 +3332,73 @@ export const mockApi = {
           job.revision = ch.revision;
         }
       } else if (job.kind === 'relation' && job.chapterIds) {
-        const chIds = job.chapterIds;
-        const relations: CourseRelationItem[] = [];
-        for (let i = 0; i < chIds.length - 1; i += 1) {
-          const srcLessons = (state.lessonsByChapter[chIds[i]] ?? []).filter((l) => l.decision !== 'REJECT');
-          const tgtLessons = (state.lessonsByChapter[chIds[i + 1]] ?? []).filter((l) => l.decision !== 'REJECT');
-          if (srcLessons.length && tgtLessons.length) {
-            relations.push({
-              id: `rel-${chIds[i]}-${chIds[i + 1]}-1`,
-              sourceId: srcLessons[srcLessons.length - 1].id,
-              sourceName: srcLessons[srcLessons.length - 1].title,
-              sourceChapterId: chIds[i],
-              targetId: tgtLessons[0].id,
-              targetName: tgtLessons[0].title,
-              targetChapterId: chIds[i + 1],
-              relationType: 'PREREQUISITE',
-              sourceRef: `Liên kết ${chIds[i]} → ${chIds[i + 1]}`,
-              reason: 'Khái niệm buổi học trước là nền tảng trực tiếp để tiếp thu bài mở đầu buổi học sau.',
-              requiredKnowledge: `Nắm vững ${srcLessons[srcLessons.length - 1].title}`,
-              confidence: 0.91,
-              evidence: [{ slideId: `${chIds[i]}_p12`, quote: `Khái niệm ${srcLessons[srcLessons.length - 1].title} được dùng trực tiếp ở phần đầu ${tgtLessons[0].title}.` }],
-              assessment: { verdict: 'supported', issue: '' },
-              aiComment: 'AI đề xuất tiên quyết giữa các buổi học dựa trên khái niệm nền tảng.',
-              hasWarning: false,
+        const activeWeekId = job.chapterId ?? job.chapterIds[0];
+        const activeLessons = (state.lessonsByChapter[activeWeekId] ?? []).filter((l) => l.decision !== 'REJECT');
+        const generated: CourseRelationItem[] = [];
+        // 1. Intra-chapter relations within the active chapter
+        for (let i = 0; i < activeLessons.length - 1; i += 1) {
+          generated.push({
+            id: `rel-${activeWeekId}-intra-${i + 1}`,
+            sourceId: activeLessons[i].id,
+            sourceName: activeLessons[i].title,
+            sourceChapterId: activeWeekId,
+            targetId: activeLessons[i + 1].id,
+            targetName: activeLessons[i + 1].title,
+            targetChapterId: activeWeekId,
+            relationType: activeLessons[i].level === 'lesson' && activeLessons[i + 1].level === 'topic' ? 'PART_OF' : 'PREREQUISITE',
+            strength: activeLessons[i].level === 'lesson' && activeLessons[i + 1].level === 'topic' ? null : 'hard',
+            sourceRef: activeLessons[i].sourceRef,
+            reason: `Kiến thức "${activeLessons[i].title}" làm cơ sở trực tiếp cho "${activeLessons[i + 1].title}".`,
+            requiredKnowledge: `Nắm vững ${activeLessons[i].title}`,
+            confidence: 0.92,
+            evidence: activeLessons[i].evidence ?? [],
+            assessment: { verdict: 'supported', issue: '' },
+            aiComment: 'AI đề xuất liên kết nội chương.',
+            hasWarning: false,
+            decision: 'PENDING',
+            reviewNote: '',
+          });
+        }
+        // 2. Cross-chapter relations connecting already-merged (Bản tạm) chapters to active chapter
+        const mergedChapters = state.outline.chapters.filter((c) => c.id !== activeWeekId && c.state === 'PUBLISHED');
+        mergedChapters.forEach((mCh, mIdx) => {
+          const mLessons = (state.lessonsByChapter[mCh.id] ?? []).filter((l) => l.decision !== 'REJECT');
+          if (mLessons.length && activeLessons.length) {
+            const src = mLessons[mLessons.length - 1];
+            const tgt = activeLessons[0];
+            generated.push({
+              id: `rel-${mCh.id}-to-${activeWeekId}-${mIdx + 1}`,
+              sourceId: src.id,
+              sourceName: src.title,
+              sourceChapterId: mCh.id,
+              targetId: tgt.id,
+              targetName: tgt.title,
+              targetChapterId: activeWeekId,
+              relationType: mIdx === mergedChapters.length - 1 ? 'PREREQUISITE' : 'RELATED_TO',
+              strength: mIdx === mergedChapters.length - 1 ? 'hard' : null,
+              sourceRef: tgt.sourceRef,
+              reason: `Nối "${src.title}" (${mCh.title}) từ Bản tạm sang "${tgt.title}" của chương đang xử lý.`,
+              requiredKnowledge: mIdx === mergedChapters.length - 1 ? `Nắm vững ${src.title}` : '',
+              confidence: 0.88,
+              evidence: tgt.evidence ?? [],
+              assessment: mIdx === 0 ? { verdict: 'supported', issue: '' } : { verdict: 'revise', issue: 'Kiểm tra lại độ mạnh tiên quyết liên chương.' },
+              aiComment: mIdx === 0 ? 'AI đề xuất liên kết với Bản tạm.' : 'AI gợi ý kiểm tra độ mạnh liên kết.',
+              hasWarning: mIdx !== 0,
               decision: 'PENDING',
               reviewNote: '',
             });
           }
-        }
-        state.relations = relations;
+        });
+        if (!state.relationsByChapter) state.relationsByChapter = {};
+        state.relationsByChapter[activeWeekId] = generated;
+        if (!state.draftPhaseByChapter) state.draftPhaseByChapter = {};
+        state.draftPhaseByChapter[activeWeekId] = 'ready';
+        if (!state.needsRebaseByChapter) state.needsRebaseByChapter = {};
+        state.needsRebaseByChapter[activeWeekId] = false;
+        state.relations = [
+          ...state.relations.filter((r) => r.sourceChapterId !== activeWeekId && r.targetChapterId !== activeWeekId),
+          ...generated,
+        ];
         state.relationRevision += 1;
         job.revision = state.relationRevision;
       }
@@ -2794,7 +3444,26 @@ export const mockApi = {
       warnings: hasDocs
         ? ['2 trang có ít văn bản (chủ yếu là sơ đồ/hình ảnh), hệ thống chỉ trích xuất phần text layer.']
         : ['Chưa có tài liệu buổi học nào được tải lên.'],
+      ocrPages: [],
+      excludedOcrCount: 0,
       revision: ch?.revision ?? 1,
+    }, 60);
+  },
+  excludeChapterOcrPages(
+    courseId: string,
+    chapterId: string,
+    body: { expectedRevision: number; slideIds?: string[]; reason?: string },
+  ) {
+    const state = ensureAuthoringState(courseId);
+    const ch = state.outline.chapters.find((c) => c.id === chapterId);
+    const nextRev = (ch?.revision ?? body.expectedRevision) + 1;
+    if (ch) ch.revision = nextRev;
+    state.relationRevision = nextRev;
+    persistAuthoring();
+    return wait({
+      revision: nextRev,
+      remainingOcrPages: [] as Array<{ slideId: string; file: string; page: number }>,
+      excludedCount: body.slideIds?.length ?? 0,
     }, 60);
   },
   getCourseUsage(courseId: string) {

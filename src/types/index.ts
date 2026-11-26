@@ -140,13 +140,28 @@ export interface CourseSection {
 
 export interface StudentGradeItem {
   id: string;
-  category: 'manual' | 'attendance';
+  category: 'manual' | 'attendance' | 'quiz' | 'assignment';
   titleVi: string;
   titleEn: string;
   score: number | null;
   maxScore: number;
+  scorePct?: number | null;
   weight: number | null;
   feedback: string | null;
+  quizId?: string | null;
+  conceptId?: string | null;
+  conceptTitle?: string | null;
+  chapterNumber?: number | null;
+  chapterTitle?: string | null;
+  attemptsUsed?: number;
+  attemptsAllowed?: number;
+  correctCount?: number | null;
+  totalQuestions?: number;
+  passScorePct?: number;
+  passed?: boolean | null;
+  submittedAt?: string | null;
+  status?: 'passed' | 'failed' | 'not_started' | 'graded' | 'submitted' | 'not_submitted';
+  masteryPct?: number | null;
 }
 
 export interface CourseOverallGrade {
@@ -169,6 +184,12 @@ export interface RosterStudent {
   lastUpdatedAt?: string;
   status: 'active' | 'withdrawn';
   progress: number;
+  masteredConcepts?: number;
+  totalConcepts?: number;
+  quizzesPassed?: number;
+  quizzesTotal?: number;
+  quizAvgScore?: number | null;
+  weakConceptTitles?: string[];
 }
 
 export interface TeacherGradeRow extends RosterStudent {
@@ -327,9 +348,11 @@ export interface Quiz {
   conceptId?: string | null;
   title: string;
   description: string;
+  quizType?: string;
   timeLimitMinutes: number;
   attemptsAllowed: number;
   attemptsUsed: number;
+  passScorePct?: number;
   status: QuizStatus;
   questions: QuizQuestion[];
 }
@@ -357,6 +380,9 @@ export interface QuizAttempt {
   maxScore: number;
   correctCount?: number;
   totalQuestions: number;
+  passed?: boolean;
+  scorePct?: number;
+  passScorePct?: number;
 }
 
 export interface SubmitQuizInput {
@@ -600,6 +626,9 @@ export interface NodeDetail {
   title: string;
   course: string;
   cluster: string;
+  chapterTitle?: string;
+  week?: number;
+  durationMin?: number;
   statusLabel: string;
   status: NodeStatus;
   mastery: number;
@@ -611,6 +640,9 @@ export interface NodeDetail {
     role: string;
     bodyText?: string | null;
     url?: string | null;
+    pageFrom?: number | null;
+    pageTo?: number | null;
+    contentVersion?: number;
   }>;
   quizIds?: string[];
   aiHint?: string;
@@ -699,6 +731,9 @@ export interface ContentItem {
   title: string;
   bodyText?: string;
   url?: string | null;
+  pageFrom?: number | null;
+  pageTo?: number | null;
+  contentVersion?: number;
   source: string;
 }
 
@@ -712,18 +747,120 @@ export interface QuestionItem {
   options?: unknown;
   correctAnswer?: unknown;
   explanation?: string;
+  itemVersion?: number;
+  points?: number;
+}
+
+export interface ConceptQuizQuestion {
+  id: string;
+  prompt: string;
+  options: QuizOption[];
+  correctOptionId: string;
+  explanation?: string;
+  bloomLevel: number;
+  points: number;
+  status: 'approved' | 'draft';
+  itemVersion?: number;
+}
+
+export interface ConceptQuiz {
+  id: string;
+  courseId: string;
+  conceptId?: string | null;
+  title: string;
+  description: string;
+  quizType?: string;
+  timeLimitMinutes: number;
+  attemptsAllowed: number;
+  passScorePct: number;
+  status: QuizStatus;
+  questions: ConceptQuizQuestion[];
+}
+
+export interface UpsertConceptQuizInput {
+  quizId?: string | null;
+  title: string;
+  description: string;
+  timeLimitMinutes: number;
+  attemptsAllowed: number;
+  passScorePct: number;
+  status: QuizStatus;
+  questions: Array<{
+    id?: string | null;
+    prompt: string;
+    options: QuizOption[];
+    correctOptionId: string;
+    explanation?: string;
+    bloomLevel: number;
+    points: number;
+    status: 'approved' | 'draft';
+  }>;
+}
+
+export interface ContentHistoryItem {
+  contentId: string;
+  title: string;
+  role: string;
+  bodyText?: string | null;
+  contentVersion: number;
+  status: string;
+  isArchived: boolean;
+  archivedAt?: string | null;
+}
+
+export interface ConceptContentOverviewItem {
+  id: string;
+  code: string;
+  name: string;
+  week: number;
+  chapterTitle?: string;
+  durationMin: number;
+  contentVersion: number;
+  learningOutcomes: string[];
+  contentCount: number;
+  approvedContentCount: number;
+  itemCount: number;
+  approvedItemCount: number;
+  quizCount: number;
+  publishedQuizCount: number;
+  primaryQuizId?: string | null;
+  primaryQuizTitle?: string | null;
+  primaryQuizStatus: QuizStatus | 'none';
+  primaryQuizQuestionCount: number;
+  hasContent: boolean;
+  hasQuiz: boolean;
+  isComplete: boolean;
+}
+
+export interface CourseConceptsContentOverview {
+  courseId: string;
+  totalConcepts: number;
+  conceptsWithContent: number;
+  conceptsWithApprovedContent: number;
+  conceptsWithQuiz: number;
+  conceptsWithPublishedQuiz: number;
+  completedConcepts: number;
+  concepts: ConceptContentOverviewItem[];
 }
 
 export interface NodeEditorData {
   id: string;
+  courseId?: string;
+  code?: string;
+  week?: number;
+  chapterTitle?: string;
+  durationMin?: number;
+  contentVersion?: number;
   name: string;
   course: string;
   group: string; // Stack
   parentNode: string; // Stack bằng mảng
   cluster: string;
   description: string;
+  learningOutcomes?: Array<{ code: string; description: string; bloomLevel?: number }>;
   contents: ContentItem[];
   questions: QuestionItem[];
+  quizzes?: ConceptQuiz[];
   prerequisites: string[];
 }
 
@@ -772,6 +909,8 @@ export interface OutlineChapter {
   description?: string;
   loCodes: string[];
   state: ChapterWorkflowState;
+  rawState?: string | null;
+  mergedInMaster?: boolean;
   revision: number;
   documentCount?: number;
   sessionLabel?: string;
@@ -811,7 +950,22 @@ export interface OutlineDraftResponse {
   revision: number;
   masterVersion?: number;
   publishedWeekCount?: number;
+  coursePublished?: boolean;
+  latestReleaseNo?: number;
   activeJob?: (WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }) | null;
+}
+
+export interface CourseGraphDraftSummary {
+  draftId: string;
+  courseId: string;
+  effectiveTermNo: number;
+  draftRevision: number;
+  baseRevision?: number | null;
+  status: 'draft' | 'under_review' | 'approved' | 'published' | 'rejected' | 'archived';
+  title?: string | null;
+  note?: string | null;
+  publishedReleaseId?: string | null;
+  createdAt: string;
 }
 
 export interface WorkflowJobStage {
@@ -896,6 +1050,7 @@ export interface CourseRelationItem {
   targetName: string;
   targetChapterId: string;
   relationType: 'PREREQUISITE' | 'PART_OF' | 'RELATED_TO' | 'DEVELOP';
+  strength?: 'hard' | 'soft' | null;
   sourceRef: string;
   reason?: string;
   requiredKnowledge?: string;
@@ -919,6 +1074,38 @@ export interface RelationEndpointOption {
   weekId?: string;
 }
 
+export interface Step3SnapshotSummary {
+  draftId: string;
+  courseId: string;
+  effectiveTermNo: number;
+  draftRevision: number;
+  baseRevision?: number | null;
+  status: 'draft' | 'under_review' | 'approved' | 'published' | 'rejected' | 'archived';
+  title: string;
+  note?: string;
+  publishedReleaseId?: string | null;
+  createdAt: string;
+  includedWeekIds: string[];
+  includedWeekTitles?: string[];
+  sourceWeekIds?: string[];
+  baseSnapshotId?: string | null;
+  baseSnapshotRevision?: number | null;
+  nodeCount: number;
+  edgeCount: number;
+  isStep3Snapshot?: boolean;
+}
+
+export interface Step3WorkspaceResponse {
+  focusWeekId: string;
+  selectedWeekIds: string[];
+  baseSnapshot: Step3SnapshotSummary | null;
+  snapshots: Step3SnapshotSummary[];
+  revision: number;
+  graph: KnowledgeGraphData;
+  endpoints: RelationEndpointOption[];
+  relations: CourseRelationItem[];
+}
+
 export interface SourceReadinessResponse {
   status: 'ready' | 'warning' | 'blocked';
   canGenerate: boolean;
@@ -928,6 +1115,8 @@ export interface SourceReadinessResponse {
     lowTextPages: number;
   };
   warnings: string[];
+  ocrPages?: Array<{ slideId: string; file: string; page: number }>;
+  excludedOcrCount?: number;
   revision: number;
 }
 
