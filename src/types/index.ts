@@ -129,6 +129,7 @@ export interface CourseResource {
   nameEn: string;
   kind: 'pdf' | 'slides' | 'video' | 'quiz';
   url?: string;
+  durationSeconds?: number;
 }
 
 export interface CourseSection {
@@ -223,6 +224,8 @@ export interface Assignment {
   score?: number | null;
   feedback?: string | null;
   submissionText?: string;
+  attachmentName?: string;
+  attachmentUrl?: string;
   submissionCount?: number;
   gradedCount?: number;
 }
@@ -232,6 +235,8 @@ export interface AssignmentSubmissionRecord {
   studentId: string;
   studentName: string;
   text: string;
+  attachmentName?: string;
+  attachmentUrl?: string;
   submittedAt: string;
   status: SubmissionStatus;
   score: number | null;
@@ -326,6 +331,9 @@ export interface UpdateAssignmentInput {
 
 export interface SubmitAssignmentInput {
   text: string;
+  file?: File | null;
+  attachmentName?: string;
+  attachmentUrl?: string;
 }
 
 
@@ -353,6 +361,7 @@ export interface Quiz {
   attemptsAllowed: number;
   attemptsUsed: number;
   passScorePct?: number;
+  dueAt?: string;
   status: QuizStatus;
   questions: QuizQuestion[];
 }
@@ -367,6 +376,7 @@ export interface CreateQuizInput {
   timeLimitMinutes: number;
   attemptsAllowed: number;
   conceptId?: string;
+  dueAt?: string;
   questions: CreateQuizQuestionInput[];
 }
 
@@ -725,7 +735,7 @@ export interface HeatSpot {
 
 export interface ContentItem {
   id: string;
-  kind: 'Definition' | 'Example';
+  kind: 'Definition' | 'Example' | 'Video' | 'Document';
   role?: 'definition' | 'example';
   status: 'approved' | 'draft';
   title: string;
@@ -735,6 +745,9 @@ export interface ContentItem {
   pageTo?: number | null;
   contentVersion?: number;
   source: string;
+  mediaUrl?: string;
+  durationMin?: number;
+  body?: string;
 }
 
 export interface QuestionItem {
@@ -749,6 +762,8 @@ export interface QuestionItem {
   explanation?: string;
   itemVersion?: number;
   points?: number;
+  mode?: 'quiz' | 'practice';
+  correctIndex?: number;
 }
 
 export interface ConceptQuizQuestion {
@@ -862,6 +877,8 @@ export interface NodeEditorData {
   questions: QuestionItem[];
   quizzes?: ConceptQuiz[];
   prerequisites: string[];
+  passThreshold?: number;
+  unlockRule?: 'pass_quiz' | 'view_and_pass' | 'open';
 }
 
 export type KnowledgeNodeType = 'Course' | 'LO' | 'Concept' | 'Assignment' | 'Item' | 'Content' | string;
@@ -1154,4 +1171,50 @@ export interface PublicationStatusResponse {
   syncStatus: 'PENDING' | 'SYNCED' | 'FAILED' | 'BLOCKED';
   canRecover: boolean;
   error?: string | null;
+}
+
+export interface DiagnosticQuestion {
+  id: string;
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+  conceptTag?: string;
+}
+
+export interface CourseOnboardingConfig {
+  surveyEnabled: boolean;
+  surveyTitle: string;
+  collectBackground: boolean;
+  collectGoal: boolean;
+  collectWeeklyHours: boolean;
+  diagnosticEnabled: boolean;
+  diagnosticPassScore: number;
+  diagnosticQuestions: DiagnosticQuestion[];
+}
+
+export interface StudentOnboardingResult {
+  completed: boolean;
+  completedAt?: string;
+  survey?: {
+    backgroundLevel: string;
+    learningGoal: string;
+    weeklyHours: number;
+  };
+  diagnosticScore?: number;
+  diagnosticPassed?: boolean;
+  transcriptGpa?: number;
+  summary?: string;
+}
+
+export interface MasterGraphBridge {
+  id: string;
+  sourceCourseId: string;
+  sourceCourseCode: string;
+  sourceLoCode: string;
+  targetCourseId: string;
+  targetCourseCode: string;
+  targetLoCode: string;
+  relationType: 'PREREQUISITE' | 'RELATED_TO';
+  reason: string;
+  decision: 'PENDING' | 'APPROVE' | 'REJECT';
 }

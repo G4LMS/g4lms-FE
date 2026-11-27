@@ -90,6 +90,7 @@ export interface KnowledgeGraphCanvasProps {
     input: { name: string; description: string; properties?: Record<string, unknown> },
   ) => Promise<void>;
   initialExpandedIds?: string[];
+  defaultShowAll?: boolean;
   onFocusInChain?: (nodeId: string) => void;
 }
 
@@ -197,6 +198,7 @@ export function KnowledgeGraphCanvas({
   focusRequest,
   onQuickUpdateNode,
   initialExpandedIds,
+  defaultShowAll = false,
   onFocusInChain,
 }: KnowledgeGraphCanvasProps) {
   const isTeacher = role === 'teacher';
@@ -205,7 +207,7 @@ export function KnowledgeGraphCanvas({
   const model = useMemo(() => buildGraphModel(data), [data]);
 
   // Progressive disclosure state
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(defaultShowAll);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initialExpandedIds ?? []));
   const [pageLimits, setPageLimits] = useState<Map<string, number>>(() => new Map());
   const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(() => new Set(['Content']));
@@ -263,7 +265,7 @@ export function KnowledgeGraphCanvas({
 
   // Reset state cleanly when courseId or initialExpandedIds changes
   useEffect(() => {
-    setShowAll(false);
+    setShowAll(defaultShowAll);
     setExpanded(new Set(initialExpandedIds ?? []));
     setPageLimits(new Map());
     setHiddenNodeTypes(new Set(['Content']));
@@ -281,8 +283,13 @@ export function KnowledgeGraphCanvas({
 
   const getNodeSuggestedWeek = useCallback((props: Record<string, unknown>): string | null => {
     const raw = props.default_week ?? props.defaultWeek ?? props.week;
-    if (raw == null || String(raw).trim() === '') return null;
-    return String(raw).trim();
+    if (raw != null && String(raw).trim() !== '') return String(raw).trim();
+    const chapterRaw = props.chapter_id ?? props.chapterId;
+    if (typeof chapterRaw === 'string' && chapterRaw.trim()) {
+      const match = chapterRaw.match(/\d+/);
+      return match ? match[0] : chapterRaw.trim();
+    }
+    return null;
   }, []);
 
   const sessionWeekOptions = useMemo(() => {
@@ -749,11 +756,25 @@ export function KnowledgeGraphCanvas({
       .attr('r', (d) => d.r + 5)
       .attr('stroke', (d) => nodeStyleOf(d.data.type).fill);
 
+    const isStudentStudyNode = (nodeType: string) =>
+      nodeType !== 'Course' && nodeType !== 'Chapter' && nodeType !== 'LO' && nodeType !== 'Content' && nodeType !== 'More';
+    const isNodeLearned = (props: Record<string, unknown>) =>
+      props.learning_state === 'mastered' ||
+      props.learningState === 'mastered' ||
+      (typeof props.mastery === 'number' && props.mastery >= 70) ||
+      props.status === 'mastered';
+
     nAll
       .select<SVGCircleElement>('.kg-body')
       .attr('r', (d) => d.r)
       .attr('fill', (d) => nodeStyleOf(d.data.type).fill)
-      .attr('stroke', (d) => nodeStyleOf(d.data.type).stroke)
+      .attr('stroke', (d) => {
+        if (!isTeacher && !d.data.isVirtualMore && isStudentStudyNode(d.data.type)) {
+          return isNodeLearned(d.data.props) ? '#16a34a' : '#d97706';
+        }
+        return nodeStyleOf(d.data.type).stroke;
+      })
+      .attr('stroke-width', (d) => (!isTeacher && !d.data.isVirtualMore && isStudentStudyNode(d.data.type) ? 2.5 : null))
       .attr('stroke-dasharray', (d) => (d.data.isVirtualMore ? '4 3' : null));
 
     nAll
@@ -762,13 +783,22 @@ export function KnowledgeGraphCanvas({
       .attr('cy', (d) => -d.r * 0.72)
       .style('display', (d) => (d.pinned ? null : 'none'));
 
-    // Teacher orange indicator dot when collapsed branch has hidden review items (or node itself needs review)
+    // Teacher orange indicator dot (needsReview) OR Student learned/unlearned status dot
     nAll
       .select<SVGCircleElement>('.kg-review-dot')
       .attr('cx', (d) => -d.r * 0.72)
       .attr('cy', (d) => -d.r * 0.72)
+      .style('fill', (d) => {
+        if (!isTeacher && !d.data.isVirtualMore && isStudentStudyNode(d.data.type)) {
+          return isNodeLearned(d.data.props) ? '#16a34a' : '#f59e0b';
+        }
+        return null;
+      })
       .style('display', (d) => {
-        if (!isTeacher || d.data.isVirtualMore) return 'none';
+        if (d.data.isVirtualMore) return 'none';
+        if (!isTeacher) {
+          return isStudentStudyNode(d.data.type) ? null : 'none';
+        }
         const hiddenChildren = visible.hiddenChildCount.get(d.id) ?? 0;
         const hiddenReview = model.reviewDescendantCount.get(d.id) ?? 0;
         return d.data.needsReview || (hiddenChildren > 0 && hiddenReview > 0) ? null : 'none';
@@ -1636,7 +1666,7 @@ export function KnowledgeGraphCanvas({
           {isTeacher && sessionWeekOptions.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label htmlFor="kg-session-week-filter" style={{ fontSize: 12, fontWeight: 600 }}>
-                Buổi học (Tuần gợi ý)
+                Chương
               </label>
               <select
                 id="kg-session-week-filter"
@@ -1649,10 +1679,10 @@ export function KnowledgeGraphCanvas({
                 }}
                 style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--line)', fontSize: 12.5, background: '#fff' }}
               >
-                <option value="all">Tất cả buổi học</option>
+                <option value="all">Tất cả chương</option>
                 {sessionWeekOptions.map((w) => (
                   <option key={w} value={w}>
-                    Buổi học {w}
+                    {/^\d+$/.test(w) ? `Chương ${w}` : w}
                   </option>
                 ))}
               </select>
@@ -1934,6 +1964,26 @@ export function KnowledgeGraphCanvas({
                       Sửa chi tiết
                     </button>
                   )}
+                  {!isTeacher && selectedNode.type !== 'Course' && selectedNode.type !== 'Chapter' && selectedNode.type !== 'LO' && (() => {
+                    const p = selectedNode.props;
+                    const learned =
+                      p.learning_state === 'mastered' ||
+                      p.learningState === 'mastered' ||
+                      (typeof p.mastery === 'number' && p.mastery >= 70) ||
+                      p.status === 'mastered';
+                    return (
+                      <span
+                        className="pill-badge"
+                        style={{
+                          background: learned ? '#dcfce7' : '#fef3c7',
+                          color: learned ? '#15803d' : '#b45309',
+                          borderColor: learned ? '#86efac' : '#fde68a',
+                        }}
+                      >
+                        {learned ? 'Đã học' : 'Chưa học'}
+                      </span>
+                    );
+                  })()}
                   {!isTeacher && onStartLearning && selectedNode.type !== 'Course' && selectedNode.type !== 'Chapter' && (
                     <button type="button" className="btn btn-primary sm" onClick={() => onStartLearning(selectedNode.id)}>
                       Học bài này
@@ -2260,8 +2310,8 @@ export function KnowledgeGraphCanvas({
                     )}
                     {(selectedNode.props.default_week ?? selectedNode.props.defaultWeek) != null && (
                       <tr>
-                        <td>tuần gợi ý</td>
-                        <td>Buổi học {String(selectedNode.props.default_week ?? selectedNode.props.defaultWeek)}</td>
+                        <td>chương</td>
+                        <td>Chương {String(selectedNode.props.default_week ?? selectedNode.props.defaultWeek)}</td>
                       </tr>
                     )}
                     {typeof selectedNode.props.confidence === 'number' && (
@@ -2305,7 +2355,7 @@ export function KnowledgeGraphCanvas({
                     )}
                     {Boolean(selectedNode.props.chapter_id) && (
                       <tr>
-                        <td>buổi học</td>
+                        <td>mã chương</td>
                         <td>{String(selectedNode.props.chapter_id)}</td>
                       </tr>
                     )}
@@ -2342,16 +2392,25 @@ export function KnowledgeGraphCanvas({
                   </tbody>
                 </table>
 
-                {Array.isArray(selectedNode.props.details) && selectedNode.props.details.length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <div className="muted-s" style={{ fontWeight: 700, marginBottom: 4 }}>Nội dung chi tiết</div>
-                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
-                      {(selectedNode.props.details as Array<{ name?: string }>).map((d, idx) => (
-                        <li key={idx}>{d.name ?? String(d)}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                {(() => {
+                  const detailItems =
+                    Array.isArray(selectedNode.props.details) && selectedNode.props.details.length > 0
+                      ? (selectedNode.props.details as Array<{ name?: string }>)
+                      : Array.isArray(selectedNode.props.aspects) && selectedNode.props.aspects.length > 0
+                        ? (selectedNode.props.aspects as Array<{ name?: string }>)
+                        : [];
+                  if (detailItems.length === 0) return null;
+                  return (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="muted-s" style={{ fontWeight: 700, marginBottom: 4 }}>Nội dung chi tiết</div>
+                      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
+                        {detailItems.map((d, idx) => (
+                          <li key={idx}>{d.name ?? String(d)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
 
                 {Array.isArray(selectedNode.props.evidence) && selectedNode.props.evidence.length > 0 && (
                   <div style={{ marginTop: 10 }}>
@@ -2377,6 +2436,42 @@ export function KnowledgeGraphCanvas({
                     </div>
                   </div>
                 )}
+
+                {!isTeacher && selectedNode.type !== 'Course' && selectedNode.type !== 'Chapter' && (() => {
+                  const prereqGroup = selectedNodeRelations.find((r) => r.type === 'PREREQUISITE');
+                  const before = (prereqGroup?.items ?? []).filter((item) => !item.out);
+                  const after = (prereqGroup?.items ?? []).filter((item) => item.out);
+                  if (before.length === 0 && after.length === 0) return null;
+                  return (
+                    <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line)', background: '#f8fafc' }}>
+                      <div className="muted-s" style={{ fontWeight: 700, marginBottom: 6 }}>Chuỗi bài học liên quan</div>
+                      {before.length > 0 && (
+                        <div style={{ marginBottom: after.length > 0 ? 6 : 0 }}>
+                          <div className="muted-xs" style={{ marginBottom: 4 }}>Nên học trước:</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {before.map(({ other }) => (
+                              <button key={`pre-${other.id}`} type="button" className="btn btn-outline sm" onClick={() => revealNode(other.id)}>
+                                ← {other.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {after.length > 0 && (
+                        <div>
+                          <div className="muted-xs" style={{ marginBottom: 4 }}>Học tiếp:</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {after.map(({ other }) => (
+                              <button key={`nxt-${other.id}`} type="button" className="btn btn-outline sm" onClick={() => revealNode(other.id)}>
+                                {other.name} →
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <div className="kg-rels">
                   {selectedNodeRelations.map(({ type, items }) => {
@@ -2677,7 +2772,7 @@ export function KnowledgeGraphCanvas({
                 </label>
               ) : (
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600 }}>
-                  Mã buổi học (chapter_id)
+                  Mã chương (chapter_id)
                   <input
                     value={newNodeChapter}
                     onChange={(e) => setNewNodeChapter(e.target.value)}

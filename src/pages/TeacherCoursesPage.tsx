@@ -139,6 +139,11 @@ export default function TeacherCoursesPage() {
         const pB = b.totalNodes ? b.nodesWithContent / b.totalNodes : 0;
         return pB - pA;
       }
+      if (sortBy === 'time') {
+        const semRank = (c: TeacherCourse) => (c.year ?? 2026) * 10 + (c.semester === 'HK2' ? 2 : c.semester === 'HK3' ? 3 : 1);
+        const diff = semRank(b) - semRank(a);
+        return diff !== 0 ? diff : a.title.localeCompare(b.title);
+      }
       return a.title.localeCompare(b.title);
     });
 

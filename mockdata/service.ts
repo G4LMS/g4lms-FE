@@ -706,7 +706,7 @@ export const mockApi = {
     const name = admin ? 'Quản trị G4LMS' : teacher ? 'Nguyễn Văn Hùng' : 'Nguyễn Anh';
     return wait({ id: admin ? 'usr-admin-demo' : 'usr-demo', name, initials: admin ? 'QT' : teacher ? 'NH' : 'NA', email, role, accessToken: 'demo-access-token' });
   },
-  getAdminUsers: (): Promise<AdminUser[]> => wait(adminUsers.filter((user) => user.active).map((user) => ({ ...user }))),
+  getAdminUsers: (): Promise<AdminUser[]> => wait(adminUsers.map((user) => ({ ...user }))),
   createAdminUser(input: { email: string; fullName: string; role: Role }): Promise<AdminUser> {
     if (adminUsers.some((user) => user.email.toLowerCase() === input.email.toLowerCase())) {
       return Promise.reject(new Error('Email đã được sử dụng.'));
@@ -721,6 +721,35 @@ export const mockApi = {
     };
     adminUsers.unshift(user);
     return wait({ ...user });
+  },
+  updateAdminUser(
+    userId: string,
+    input: { fullName?: string; email?: string; role?: Role; active?: boolean },
+  ): Promise<AdminUser> {
+    const target = adminUsers.find((user) => user.id === userId);
+    if (!target) return Promise.reject(new Error('Không tìm thấy tài khoản.'));
+    if (input.email !== undefined) {
+      const nextEmail = input.email.trim();
+      if (!nextEmail || !nextEmail.includes('@')) {
+        return Promise.reject(new Error('Email không hợp lệ.'));
+      }
+      if (adminUsers.some((u) => u.id !== userId && u.email.toLowerCase() === nextEmail.toLowerCase())) {
+        return Promise.reject(new Error('Email đã được sử dụng bởi tài khoản khác.'));
+      }
+      target.email = nextEmail;
+    }
+    if (input.fullName !== undefined) {
+      const nextName = input.fullName.trim();
+      if (!nextName) return Promise.reject(new Error('Họ tên không được để trống.'));
+      target.name = nextName;
+    }
+    if (input.role !== undefined && target.role !== 'admin') {
+      target.role = input.role;
+    }
+    if (input.active !== undefined && target.role !== 'admin') {
+      target.active = input.active;
+    }
+    return wait({ ...target });
   },
   resetAdminUserPassword(userId: string): Promise<void> {
     if (!adminUsers.some((user) => user.id === userId && user.active)) {
@@ -1985,6 +2014,8 @@ export const mockApi = {
       description?: string;
       contents?: NodeEditorData['contents'];
       questions?: NodeEditorData['questions'];
+      passThreshold?: number;
+      unlockRule?: NodeEditorData['unlockRule'];
     },
   ): Promise<NodeEditorData> {
     const current = nodeEditorStore[nodeId] ?? data.buildNodeEditor(nodeId);
@@ -1994,6 +2025,8 @@ export const mockApi = {
       description: input.description !== undefined ? input.description : current.description,
       contents: input.contents ? input.contents.map((c) => ({ ...c })) : current.contents,
       questions: input.questions ? input.questions.map((q) => ({ ...q })) : current.questions,
+      passThreshold: input.passThreshold !== undefined ? input.passThreshold : current.passThreshold,
+      unlockRule: input.unlockRule !== undefined ? input.unlockRule : current.unlockRule,
     };
     nodeEditorStore[nodeId] = updated;
     persistNodeEditors();
@@ -3500,5 +3533,124 @@ export const mockApi = {
       localStorage.setItem(`g4lms.adaptive.${courseId}`, JSON.stringify(settings));
     } catch { /* ignore */ }
     return wait(settings, 60);
+  },
+  getCourseOnboardingConfig(courseId: string): Promise<import('../src/types').CourseOnboardingConfig> {
+    try {
+      const raw = localStorage.getItem(`g4lms.onboardingConfig.${courseId}`);
+      if (raw) return wait(JSON.parse(raw), 50);
+    } catch { /* ignore */ }
+    return wait({
+      surveyEnabled: true,
+      surveyTitle: `Khảo sát đầu vào môn ${courseId}`,
+      collectBackground: true,
+      collectGoal: true,
+      collectWeeklyHours: true,
+      diagnosticEnabled: true,
+      diagnosticPassScore: 60,
+      diagnosticQuestions: [
+        {
+          id: `${courseId}-diag-1`,
+          prompt: `Bạn đã nắm vững khái niệm nền tảng trước khi học ${courseId} ở mức nào?`,
+          options: ['Khái niệm cơ bản về biến và hàm', 'Cấu trúc dữ liệu tuyến tính cơ bản', 'Giải thuật đệ quy và độ phức tạp', 'Chưa từng tiếp xúc'],
+          correctIndex: 2,
+          conceptTag: 'Nền tảng đầu vào',
+        },
+        {
+          id: `${courseId}-diag-2`,
+          prompt: 'Độ phức tạp thời gian của thao tác truy cập phần tử theo chỉ số trong mảng (Array) là bao nhiêu?',
+          options: ['O(1)', 'O(log n)', 'O(n)', 'O(n log n)'],
+          correctIndex: 0,
+          conceptTag: 'Độ phức tạp',
+        },
+      ],
+    }, 50);
+  },
+  saveCourseOnboardingConfig(courseId: string, config: import('../src/types').CourseOnboardingConfig) {
+    try {
+      localStorage.setItem(`g4lms.onboardingConfig.${courseId}`, JSON.stringify(config));
+    } catch { /* ignore */ }
+    return wait(config, 60);
+  },
+  getStudentOnboardingResult(courseId: string): Promise<import('../src/types').StudentOnboardingResult> {
+    try {
+      const raw = localStorage.getItem(`g4lms.onboardingResult.${courseId}`);
+      if (raw) return wait(JSON.parse(raw), 50);
+    } catch { /* ignore */ }
+    return wait({ completed: false }, 50);
+  },
+  async submitStudentOnboarding(
+    courseId: string,
+    input: { survey?: import('../src/types').StudentOnboardingResult['survey']; diagnosticAnswers: Record<string, number> },
+  ): Promise<import('../src/types').StudentOnboardingResult> {
+    const cfg = await this.getCourseOnboardingConfig(courseId);
+    const total = cfg.diagnosticQuestions.length;
+    const correct = cfg.diagnosticQuestions.filter((q) => input.diagnosticAnswers[q.id] === q.correctIndex).length;
+    const score = total > 0 ? Math.round((correct / total) * 100) : 100;
+    const passed = score >= cfg.diagnosticPassScore;
+    const transcriptGpa = 3.2;
+    const result: import('../src/types').StudentOnboardingResult = {
+      completed: true,
+      completedAt: new Date().toISOString(),
+      survey: input.survey,
+      diagnosticScore: score,
+      diagnosticPassed: passed,
+      transcriptGpa,
+      summary: passed
+        ? `Đạt chẩn đoán (${score}%), GPA tham chiếu ${transcriptGpa}. Sẵn sàng vào lộ trình chuẩn.`
+        : `Chẩn đoán ${score}% (< ${cfg.diagnosticPassScore}%). Hệ thống đề xuất bổ trợ kiến thức nền ở đầu lộ trình.`,
+    };
+    try {
+      localStorage.setItem(`g4lms.onboardingResult.${courseId}`, JSON.stringify(result));
+    } catch { /* ignore */ }
+    return wait(result, 80);
+  },
+  proposeMasterGraphBridges(courseId: string): Promise<{ bridges: import('../src/types').MasterGraphBridge[] }> {
+    const current = teacherCoursesStore.find((c) => c.id === courseId);
+    const others = teacherCoursesStore.filter((c) => c.id !== courseId && c.published);
+    const target = others[0] ?? { id: 'CO1007', code: 'CO1007' };
+    const bridges: import('../src/types').MasterGraphBridge[] = [
+      {
+        id: `bridge-${courseId}-${target.id}-1`,
+        sourceCourseId: target.id,
+        sourceCourseCode: target.code,
+        sourceLoCode: 'LO1',
+        targetCourseId: courseId,
+        targetCourseCode: current?.code ?? courseId,
+        targetLoCode: 'LO1',
+        relationType: 'PREREQUISITE',
+        reason: `Chuẩn đầu ra nền tảng của ${target.code} là kiến thức tiên quyết giúp tiếp thu tốt học phần ${current?.code ?? courseId}.`,
+        decision: 'PENDING',
+      },
+      {
+        id: `bridge-${courseId}-${target.id}-2`,
+        sourceCourseId: courseId,
+        sourceCourseCode: current?.code ?? courseId,
+        sourceLoCode: 'LO2',
+        targetCourseId: others[1]?.id ?? 'CO3093',
+        targetCourseCode: others[1]?.code ?? 'CO3093',
+        targetLoCode: 'LO1',
+        relationType: 'RELATED_TO',
+        reason: 'Liên kết khái niệm thuật toán và cấu trúc dữ liệu ứng dụng sang học phần tiếp theo.',
+        decision: 'PENDING',
+      },
+    ];
+    return wait({ bridges }, 120);
+  },
+  integrateMasterGraph(
+    _courseId: string,
+    bridges: import('../src/types').MasterGraphBridge[],
+  ): Promise<{ integratedCount: number; masterVersion: number; warnings: string[] }> {
+    const approved = bridges.filter((b) => b.decision === 'APPROVE');
+    // Check simple inter-course prerequisite cycle (A -> B and B -> A)
+    const prereqs = approved.filter((b) => b.relationType === 'PREREQUISITE');
+    for (const a of prereqs) {
+      const reverse = prereqs.find((b) => b.sourceCourseId === a.targetCourseId && b.targetCourseId === a.sourceCourseId);
+      if (reverse) {
+        return Promise.reject(
+          new Error(`Phát hiện chu trình tiên quyết liên môn giữa ${a.sourceCourseCode} và ${a.targetCourseCode}. Vui lòng điều chỉnh trước khi lưu.`),
+        );
+      }
+    }
+    return wait({ integratedCount: approved.length, masterVersion: 1, warnings: [] }, 100);
   },
 };

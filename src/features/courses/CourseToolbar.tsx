@@ -43,6 +43,7 @@ export function CourseToolbar({
           <select value={sortValue ?? 'title'} onChange={(e) => onSortChange?.(e.target.value)}>
             <option value="title">{isVi ? 'Sắp xếp theo tên khoá học' : 'Sort by course title'}</option>
             <option value="progress">{isVi ? 'Sắp xếp theo tiến độ' : 'Sort by progress'}</option>
+            <option value="time">{isVi ? 'Sắp xếp theo thời gian' : 'Sort by time'}</option>
           </select>
           <ChevronDown size={12} />
         </label>
