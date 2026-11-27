@@ -129,6 +129,7 @@ export interface CourseResource {
   nameEn: string;
   kind: 'pdf' | 'slides' | 'video' | 'quiz';
   url?: string;
+  durationSeconds?: number;
 }
 
 export interface CourseSection {
@@ -140,13 +141,28 @@ export interface CourseSection {
 
 export interface StudentGradeItem {
   id: string;
-  category: 'manual' | 'attendance';
+  category: 'manual' | 'attendance' | 'quiz' | 'assignment';
   titleVi: string;
   titleEn: string;
   score: number | null;
   maxScore: number;
+  scorePct?: number | null;
   weight: number | null;
   feedback: string | null;
+  quizId?: string | null;
+  conceptId?: string | null;
+  conceptTitle?: string | null;
+  chapterNumber?: number | null;
+  chapterTitle?: string | null;
+  attemptsUsed?: number;
+  attemptsAllowed?: number;
+  correctCount?: number | null;
+  totalQuestions?: number;
+  passScorePct?: number;
+  passed?: boolean | null;
+  submittedAt?: string | null;
+  status?: 'passed' | 'failed' | 'not_started' | 'graded' | 'submitted' | 'not_submitted';
+  masteryPct?: number | null;
 }
 
 export interface CourseOverallGrade {
@@ -169,6 +185,12 @@ export interface RosterStudent {
   lastUpdatedAt?: string;
   status: 'active' | 'withdrawn';
   progress: number;
+  masteredConcepts?: number;
+  totalConcepts?: number;
+  quizzesPassed?: number;
+  quizzesTotal?: number;
+  quizAvgScore?: number | null;
+  weakConceptTitles?: string[];
 }
 
 export interface TeacherGradeRow extends RosterStudent {
@@ -202,6 +224,8 @@ export interface Assignment {
   score?: number | null;
   feedback?: string | null;
   submissionText?: string;
+  attachmentName?: string;
+  attachmentUrl?: string;
   submissionCount?: number;
   gradedCount?: number;
 }
@@ -211,6 +235,8 @@ export interface AssignmentSubmissionRecord {
   studentId: string;
   studentName: string;
   text: string;
+  attachmentName?: string;
+  attachmentUrl?: string;
   submittedAt: string;
   status: SubmissionStatus;
   score: number | null;
@@ -305,6 +331,9 @@ export interface UpdateAssignmentInput {
 
 export interface SubmitAssignmentInput {
   text: string;
+  file?: File | null;
+  attachmentName?: string;
+  attachmentUrl?: string;
 }
 
 
@@ -324,11 +353,15 @@ export type QuizStatus = 'draft' | 'published' | 'closed';
 export interface Quiz {
   id: string;
   courseId: string;
+  conceptId?: string | null;
   title: string;
   description: string;
+  quizType?: string;
   timeLimitMinutes: number;
   attemptsAllowed: number;
   attemptsUsed: number;
+  passScorePct?: number;
+  dueAt?: string;
   status: QuizStatus;
   questions: QuizQuestion[];
 }
@@ -342,6 +375,8 @@ export interface CreateQuizInput {
   description: string;
   timeLimitMinutes: number;
   attemptsAllowed: number;
+  conceptId?: string;
+  dueAt?: string;
   questions: CreateQuizQuestionInput[];
 }
 
@@ -355,6 +390,9 @@ export interface QuizAttempt {
   maxScore: number;
   correctCount?: number;
   totalQuestions: number;
+  passed?: boolean;
+  scorePct?: number;
+  passScorePct?: number;
 }
 
 export interface SubmitQuizInput {
@@ -598,11 +636,25 @@ export interface NodeDetail {
   title: string;
   course: string;
   cluster: string;
+  chapterTitle?: string;
+  week?: number;
+  durationMin?: number;
   statusLabel: string;
   status: NodeStatus;
   mastery: number;
   lo: string;
   prerequisites: { title: string; state: string; done: boolean }[];
+  contents?: Array<{
+    id: string;
+    title: string;
+    role: string;
+    bodyText?: string | null;
+    url?: string | null;
+    pageFrom?: number | null;
+    pageTo?: number | null;
+    contentVersion?: number;
+  }>;
+  quizIds?: string[];
   aiHint?: string;
   cta: string;
 }
@@ -683,31 +735,150 @@ export interface HeatSpot {
 
 export interface ContentItem {
   id: string;
-  kind: 'Definition' | 'Example';
+  kind: 'Definition' | 'Example' | 'Video' | 'Document';
+  role?: 'definition' | 'example';
   status: 'approved' | 'draft';
   title: string;
+  bodyText?: string;
+  url?: string | null;
+  pageFrom?: number | null;
+  pageTo?: number | null;
+  contentVersion?: number;
   source: string;
+  mediaUrl?: string;
+  durationMin?: number;
+  body?: string;
 }
 
 export interface QuestionItem {
   id: string;
   text: string;
   bloom: string;
+  bloomLevel?: number;
   difficulty: string;
   status: 'approved' | 'draft';
+  options?: unknown;
+  correctAnswer?: unknown;
+  explanation?: string;
+  itemVersion?: number;
+  points?: number;
+  mode?: 'quiz' | 'practice';
+  correctIndex?: number;
+}
+
+export interface ConceptQuizQuestion {
+  id: string;
+  prompt: string;
+  options: QuizOption[];
+  correctOptionId: string;
+  explanation?: string;
+  bloomLevel: number;
+  points: number;
+  status: 'approved' | 'draft';
+  itemVersion?: number;
+}
+
+export interface ConceptQuiz {
+  id: string;
+  courseId: string;
+  conceptId?: string | null;
+  title: string;
+  description: string;
+  quizType?: string;
+  timeLimitMinutes: number;
+  attemptsAllowed: number;
+  passScorePct: number;
+  status: QuizStatus;
+  questions: ConceptQuizQuestion[];
+}
+
+export interface UpsertConceptQuizInput {
+  quizId?: string | null;
+  title: string;
+  description: string;
+  timeLimitMinutes: number;
+  attemptsAllowed: number;
+  passScorePct: number;
+  status: QuizStatus;
+  questions: Array<{
+    id?: string | null;
+    prompt: string;
+    options: QuizOption[];
+    correctOptionId: string;
+    explanation?: string;
+    bloomLevel: number;
+    points: number;
+    status: 'approved' | 'draft';
+  }>;
+}
+
+export interface ContentHistoryItem {
+  contentId: string;
+  title: string;
+  role: string;
+  bodyText?: string | null;
+  contentVersion: number;
+  status: string;
+  isArchived: boolean;
+  archivedAt?: string | null;
+}
+
+export interface ConceptContentOverviewItem {
+  id: string;
+  code: string;
+  name: string;
+  week: number;
+  chapterTitle?: string;
+  durationMin: number;
+  contentVersion: number;
+  learningOutcomes: string[];
+  contentCount: number;
+  approvedContentCount: number;
+  itemCount: number;
+  approvedItemCount: number;
+  quizCount: number;
+  publishedQuizCount: number;
+  primaryQuizId?: string | null;
+  primaryQuizTitle?: string | null;
+  primaryQuizStatus: QuizStatus | 'none';
+  primaryQuizQuestionCount: number;
+  hasContent: boolean;
+  hasQuiz: boolean;
+  isComplete: boolean;
+}
+
+export interface CourseConceptsContentOverview {
+  courseId: string;
+  totalConcepts: number;
+  conceptsWithContent: number;
+  conceptsWithApprovedContent: number;
+  conceptsWithQuiz: number;
+  conceptsWithPublishedQuiz: number;
+  completedConcepts: number;
+  concepts: ConceptContentOverviewItem[];
 }
 
 export interface NodeEditorData {
   id: string;
+  courseId?: string;
+  code?: string;
+  week?: number;
+  chapterTitle?: string;
+  durationMin?: number;
+  contentVersion?: number;
   name: string;
   course: string;
   group: string; // Stack
   parentNode: string; // Stack bằng mảng
   cluster: string;
   description: string;
+  learningOutcomes?: Array<{ code: string; description: string; bloomLevel?: number }>;
   contents: ContentItem[];
   questions: QuestionItem[];
+  quizzes?: ConceptQuiz[];
   prerequisites: string[];
+  passThreshold?: number;
+  unlockRule?: 'pass_quiz' | 'view_and_pass' | 'open';
 }
 
 export type KnowledgeNodeType = 'Course' | 'LO' | 'Concept' | 'Assignment' | 'Item' | 'Content' | string;
@@ -747,7 +918,7 @@ export interface KnowledgeGraphData {
 export type OutlineState = 'DRAFT' | 'OUTLINE_REVIEW' | 'OUTLINE_APPROVED';
 export type ChapterWorkflowState = 'DRAFT' | 'LESSON_REVIEW' | 'LESSON_APPROVED' | 'PUBLISHED';
 export type ReviewDecision = 'PENDING' | 'APPROVE' | 'EDIT' | 'REJECT';
-export type WorkflowJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'BLOCKED' | 'FAILED';
+export type WorkflowJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 
 export interface OutlineChapter {
   id: string;
@@ -755,8 +926,22 @@ export interface OutlineChapter {
   description?: string;
   loCodes: string[];
   state: ChapterWorkflowState;
+  rawState?: string | null;
+  mergedInMaster?: boolean;
   revision: number;
   documentCount?: number;
+  sessionLabel?: string;
+  weekNumber?: number;
+  topics?: Array<{ chapter_id: string; title: string }>;
+  references?: string[];
+  draftPhase?: 'nodes' | 'nodes_reviewed' | 'relations' | 'ready' | null;
+  needsRebase?: boolean;
+  conceptCount?: number;
+  relationCount?: number;
+  relationApprovedCount?: number;
+  relationPendingCount?: number;
+  relationWarnCount?: number;
+  publishedMasterVersion?: number | null;
 }
 
 export interface OutlineLearningOutcome {
@@ -780,14 +965,46 @@ export interface OutlineDraftResponse {
   outline: CourseOutlineData;
   state: OutlineState;
   revision: number;
+  masterVersion?: number;
+  publishedWeekCount?: number;
+  coursePublished?: boolean;
+  latestReleaseNo?: number;
+  activeJob?: (WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }) | null;
+  activeJobs?: Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }>;
+}
+
+export interface CourseGraphDraftSummary {
+  draftId: string;
+  courseId: string;
+  effectiveTermNo: number;
+  draftRevision: number;
+  baseRevision?: number | null;
+  status: 'draft' | 'under_review' | 'approved' | 'published' | 'rejected' | 'archived';
+  title?: string | null;
+  note?: string | null;
+  publishedReleaseId?: string | null;
+  createdAt: string;
+}
+
+export interface WorkflowJobStage {
+  id?: string;
+  label: string;
+  done: number;
+  total?: number | null;
+  unit?: string;
 }
 
 export interface WorkflowJobResponse {
   jobId?: string;
   status: WorkflowJobStatus;
   progress: number;
+  weekId?: string | null;
+  stageLabel?: string | null;
+  elapsedSeconds?: number | null;
+  stages?: WorkflowJobStage[];
   result?: {
     revision?: number;
+    weekId?: string | null;
     [key: string]: unknown;
   };
   error?: string;
@@ -795,6 +1012,8 @@ export interface WorkflowJobResponse {
   resumeCount: number;
   maxResumeAttempts: number;
   resumeBlockedReason?: string;
+  cancelRequested?: boolean;
+  rawState?: string;
 }
 
 export type AssessmentVerdict = 'supported' | 'revise' | 'unsupported';
@@ -851,10 +1070,10 @@ export interface CourseRelationItem {
   targetName: string;
   targetChapterId: string;
   relationType: 'PREREQUISITE' | 'PART_OF' | 'RELATED_TO' | 'DEVELOP';
+  strength?: 'hard' | 'soft' | null;
   sourceRef: string;
   reason?: string;
   requiredKnowledge?: string;
-  strength?: 'hard' | 'soft' | null;
   confidence?: number;
   evidence?: GraphCitation[];
   assessment?: EdgeAssessmentFinding;
@@ -862,6 +1081,49 @@ export interface CourseRelationItem {
   hasWarning?: boolean;
   decision: ReviewDecision;
   reviewNote?: string;
+  sourceCanonicalId?: string;
+  targetCanonicalId?: string;
+}
+
+export interface RelationEndpointOption {
+  id: string;
+  name: string;
+  inDraft: boolean;
+  level?: 'topic' | 'lesson';
+  canonicalId?: string;
+  weekId?: string;
+}
+
+export interface Step3SnapshotSummary {
+  draftId: string;
+  courseId: string;
+  effectiveTermNo: number;
+  draftRevision: number;
+  baseRevision?: number | null;
+  status: 'draft' | 'under_review' | 'approved' | 'published' | 'rejected' | 'archived';
+  title: string;
+  note?: string;
+  publishedReleaseId?: string | null;
+  createdAt: string;
+  includedWeekIds: string[];
+  includedWeekTitles?: string[];
+  sourceWeekIds?: string[];
+  baseSnapshotId?: string | null;
+  baseSnapshotRevision?: number | null;
+  nodeCount: number;
+  edgeCount: number;
+  isStep3Snapshot?: boolean;
+}
+
+export interface Step3WorkspaceResponse {
+  focusWeekId: string;
+  selectedWeekIds: string[];
+  baseSnapshot: Step3SnapshotSummary | null;
+  snapshots: Step3SnapshotSummary[];
+  revision: number;
+  graph: KnowledgeGraphData;
+  endpoints: RelationEndpointOption[];
+  relations: CourseRelationItem[];
 }
 
 export interface SourceReadinessResponse {
@@ -873,6 +1135,8 @@ export interface SourceReadinessResponse {
     lowTextPages: number;
   };
   warnings: string[];
+  ocrPages?: Array<{ slideId: string; file: string; page: number }>;
+  excludedOcrCount?: number;
   revision: number;
 }
 
@@ -901,4 +1165,59 @@ export interface PublishCourseResponse {
   masterVersion: number;
   warnings: string[];
   publicationId?: string;
+}
+
+export interface PublicationStatusResponse {
+  publicationId: string;
+  releaseNo: number;
+  releaseStatus: string;
+  syncStatus: 'PENDING' | 'SYNCED' | 'FAILED' | 'BLOCKED';
+  canRecover: boolean;
+  error?: string | null;
+}
+
+export interface DiagnosticQuestion {
+  id: string;
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+  conceptTag?: string;
+}
+
+export interface CourseOnboardingConfig {
+  surveyEnabled: boolean;
+  surveyTitle: string;
+  collectBackground: boolean;
+  collectGoal: boolean;
+  collectWeeklyHours: boolean;
+  diagnosticEnabled: boolean;
+  diagnosticPassScore: number;
+  diagnosticQuestions: DiagnosticQuestion[];
+}
+
+export interface StudentOnboardingResult {
+  completed: boolean;
+  completedAt?: string;
+  survey?: {
+    backgroundLevel: string;
+    learningGoal: string;
+    weeklyHours: number;
+  };
+  diagnosticScore?: number;
+  diagnosticPassed?: boolean;
+  transcriptGpa?: number;
+  summary?: string;
+}
+
+export interface MasterGraphBridge {
+  id: string;
+  sourceCourseId: string;
+  sourceCourseCode: string;
+  sourceLoCode: string;
+  targetCourseId: string;
+  targetCourseCode: string;
+  targetLoCode: string;
+  relationType: 'PREREQUISITE' | 'RELATED_TO';
+  reason: string;
+  decision: 'PENDING' | 'APPROVE' | 'REJECT';
 }

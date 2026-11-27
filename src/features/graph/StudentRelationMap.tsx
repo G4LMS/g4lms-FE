@@ -97,7 +97,7 @@ export function StudentRelationMap({
     const prereqSources = new Map<string, string[]>();
 
     for (const e of data.edges) {
-      if (e.type === 'PREREQUISITE') {
+      if (e.type === 'PREREQUISITE' && (e.properties ?? {}).strength !== 'soft') {
         const arr = prereqSources.get(e.target) ?? [];
         arr.push(e.source);
         prereqSources.set(e.target, arr);
@@ -121,6 +121,8 @@ export function StudentRelationMap({
         p.status === 'pending_review'
       ) {
         map.set(node.id, 'remedial');
+      } else if (ls === 'locked') {
+        map.set(node.id, 'locked');
       } else {
         map.set(node.id, 'unlearned');
       }
@@ -135,21 +137,6 @@ export function StudentRelationMap({
       }
     }
 
-    // Lock subsequent sessions when an earlier session is not yet fully mastered
-    let hasUnfinishedPrevSession = false;
-    for (const ch of chapters) {
-      if (hasUnfinishedPrevSession) {
-        for (const nid of ch.nodeIds) {
-          if (map.get(nid) !== 'mastered') {
-            map.set(nid, 'locked');
-          }
-        }
-      } else {
-        const anyPending = ch.nodeIds.some((nid) => map.get(nid) !== 'mastered');
-        if (anyPending) hasUnfinishedPrevSession = true;
-      }
-    }
-
     if (!hasLearning) {
       const firstOpen =
         studyNodes.find((n) => map.get(n.id) === 'unlearned') ??
@@ -159,7 +146,7 @@ export function StudentRelationMap({
     }
 
     return map;
-  }, [studyNodes, chapters, data.edges]);
+  }, [studyNodes, data.edges]);
 
   const defaultNodeId = useMemo(() => {
     const learning = studyNodes.find(
@@ -463,7 +450,7 @@ export function StudentRelationMap({
           </div>
 
           <label>
-            Chọn cụm
+            Chọn chương
             <select
               value={
                 mode === 'focus' && selectedChapterKey === '__all__'
@@ -473,7 +460,7 @@ export function StudentRelationMap({
               onChange={(e) => handleClusterSelectChange(e.target.value)}
             >
               {mode === 'cluster' && (
-                <option value="__all__">Tất cả buổi học ({courseCode})</option>
+                <option value="__all__">Tất cả chương ({courseCode})</option>
               )}
               {chapters.map((ch) => (
                 <option key={ch.key} value={ch.key}>
@@ -692,7 +679,7 @@ export function StudentRelationMap({
                           type="button"
                           className="relation-learn-btn"
                           disabled={st === 'locked'}
-                          title={st === 'locked' ? 'Cần hoàn thành buổi học hoặc bài tiên quyết trước' : 'Vào học bài này'}
+                          title={st === 'locked' ? 'Cần hoàn thành bài tiên quyết trước' : 'Vào học bài này'}
                           onClick={() => onStartLearning(activeNode.id)}
                         >
                           {st === 'locked' ? 'Đang khóa' : 'Học'} <ArrowRight size={12} />

@@ -8,9 +8,9 @@ import { useLanguage } from '../features/i18n/LanguageContext';
 import type { Role } from '../types';
 
 const PLACEHOLDER: Record<Role, string> = {
-  student: 'sinhvien@hcmut.edu.vn',
-  teacher: 'giangvien@hcmut.edu.vn',
-  admin: 'admin@hcmut.edu.vn',
+  student: 'student@g4lms.edu.vn',
+  teacher: 'teacher@g4lms.edu.vn',
+  admin: 'admin@g4lms.edu.vn',
 };
 
 export default function LoginPage() {

@@ -1,13 +1,11 @@
 import {
   Bell,
-  Calendar,
   Check,
   ChevronDown,
   Clock,
   Globe,
   GraduationCap,
   LogOut,
-  MessageSquare,
   SlidersHorizontal,
   User,
 } from 'lucide-react';
@@ -19,7 +17,7 @@ import { api } from '../../api/client';
 import { useAsync } from '../common/useAsync';
 import type { NotificationRecord } from '../../types';
 
-type OpenMenu = 'notifications' | 'messages' | 'user' | null;
+type OpenMenu = 'notifications' | 'user' | null;
 
 interface NotificationItemProps {
   title: string;
@@ -58,10 +56,6 @@ export default function LMSHeaderActions() {
     () => user?.role === 'admin' ? Promise.resolve([]) : api.getNotifications(),
     [user?.role],
   );
-  const { data: messageData, error: messagesError } = useAsync(
-    () => user?.role === 'admin' ? Promise.resolve([]) : api.getMessages(),
-    [user?.role],
-  );
   const { data: courses, error: coursesError } = useAsync(
     async () => user?.role === 'teacher'
       ? await api.getTeacherCourses()
@@ -69,7 +63,6 @@ export default function LMSHeaderActions() {
     [user?.role],
   );
   const notifications = notificationItems;
-  const messages = messageData ?? [];
   const hasUnreadNotifications = notifications.some((item) => !item.read);
 
   useEffect(() => {
@@ -166,54 +159,6 @@ export default function LMSHeaderActions() {
         )}
       </div>}
 
-      {user?.role !== 'admin' && <div className="header-action-menu">
-        <button
-          type="button"
-          className={`icon-btn header-action-button ${openMenu === 'messages' ? 'active' : ''}`}
-          onClick={() => toggleMenu('messages')}
-          aria-label={language === 'vi' ? 'Tin nhắn' : 'Messages'}
-          aria-expanded={openMenu === 'messages'}
-        >
-          <MessageSquare size={15} />
-          {messages.some((message) => message.unread) && <span className="badge-dot" />}
-        </button>
-
-        {openMenu === 'messages' && (
-          <div className="header-popover header-messages">
-            <div className="header-popover-header">
-              <span>{language === 'vi' ? 'Tin nhắn trao đổi' : 'Messages'}</span>
-              <span className="header-new-count">{messages.filter((message) => message.unread).length} {language === 'vi' ? 'mới' : 'new'}</span>
-            </div>
-            <div className="header-message-list">
-              {messagesError && <p className="form-error" role="alert">{messagesError.message}</p>}
-              {messages.map((message, index) => (
-                <button
-                  type="button"
-                  className="header-message-item"
-                  key={message.id}
-                  onClick={() => {
-                    setOpenMenu(null);
-                    nav('/messages');
-                  }}
-                >
-                  <div className={`header-message-avatar ${index % 2 ? 'green' : ''}`}>{message.initials}</div>
-                  <div>
-                    <div className="header-message-meta">
-                      <strong>{message.sender}</strong>
-                      <span>{message.time}</span>
-                    </div>
-                    <p>{message.preview}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <button type="button" className="header-popover-link" onClick={() => { setOpenMenu(null); nav('/messages'); }}>
-              {language === 'vi' ? 'Mở hộp thư' : 'Open inbox'}
-            </button>
-          </div>
-        )}
-      </div>}
-
       <div className="header-action-menu header-user-menu">
         <button
           type="button"
@@ -246,7 +191,6 @@ export default function LMSHeaderActions() {
             {user?.role !== 'admin' && (
               <>
                 <MenuLink icon={<GraduationCap size={14} />} onClick={openGrades}>{language === 'vi' ? 'Điểm' : 'Grades'}</MenuLink>
-                <MenuLink icon={<Calendar size={14} />} onClick={() => { setOpenMenu(null); nav('/dashboard'); }}>{language === 'vi' ? 'Thời khoá biểu (TKB)' : 'Timetable'}</MenuLink>
                 {user?.role === 'student' && (
                   <MenuLink icon={<SlidersHorizontal size={14} />} onClick={() => { setOpenMenu(null); nav('/preferences'); }}>{language === 'vi' ? 'Sở thích học tập' : 'Learning preferences'}</MenuLink>
                 )}

@@ -23,7 +23,18 @@ export default function StudentCoursesPage() {
       if (statusFilter === statusOptions[2]) return c.progress >= 100;
       return true;
     })
-    .sort((a, b) => (sortBy === 'progress' ? b.progress - a.progress : a.title.localeCompare(b.title)));
+    .sort((a, b) => {
+      if (sortBy === 'progress') return b.progress - a.progress;
+      if (sortBy === 'time') {
+        const parseDeadline = (d?: string) => {
+          const m = d?.match(/(\d{1,2})\/(\d{1,2})/);
+          return m ? Number(m[2]) * 100 + Number(m[1]) : Number.MAX_SAFE_INTEGER;
+        };
+        const diff = parseDeadline(a.deadline) - parseDeadline(b.deadline);
+        return diff !== 0 ? diff : a.title.localeCompare(b.title);
+      }
+      return a.title.localeCompare(b.title);
+    });
 
   return (
     <div className="page">
@@ -43,15 +54,29 @@ export default function StudentCoursesPage() {
         {loading && <p className="muted">{isVi ? 'Đang tải khóa học...' : 'Loading courses...'}</p>}
         <div className="course-grid">
           {list.map((c) => (
-            <CourseCardShell key={c.id} code={c.code} theme={c.theme} faculty={c.faculty} title={c.title} to={`/courses/${c.id}/graph`}
-              footer={c.deadline && <span className="muted-s">{c.deadline}</span>}>
+            <CourseCardShell
+              key={c.id}
+              code={c.code}
+              theme={c.theme}
+              faculty={c.faculty}
+              title={c.title}
+              badge={`${c.progress}%`}
+              to={`/courses/${c.id}/graph`}
+              footer={c.deadline && <span className="muted-s">{c.deadline}</span>}
+            >
               <div className="course-lecturer">{t('lecturer')}: {c.lecturer}</div>
               <ProgressBar value={c.progress} />
               <div className="course-progress">{c.progress}% {t('completed')}</div>
-              <div className="course-gap">{c.gap}</div>
+              {c.gap && <div className="course-gap">{c.gap}</div>}
             </CourseCardShell>
           ))}
         </div>
+        {!loading && !error && list.length === 0 && (
+          <div className="course-empty-state">
+            <b>{isVi ? 'Không tìm thấy khóa học nào' : 'No courses found'}</b>
+            <span>{isVi ? 'Thử thay đổi từ khóa tìm kiếm hoặc trạng thái lọc.' : 'Try adjusting your search query or status filter.'}</span>
+          </div>
+        )}
         <div className="page-size">{t('show')}
           <label className="select tiny"><select defaultValue="12"><option>12</option><option>24</option><option>48</option></select></label>
         </div>

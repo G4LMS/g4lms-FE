@@ -22,7 +22,7 @@ export interface EdgeStyle {
 
 export const NODE_STYLES: Record<string, NodeStyle> = {
   Course: { fill: '#FFE8A3', stroke: '#E5B84B', r: 42, vi: 'Môn học' },
-  Chapter: { fill: '#DBEAFE', stroke: '#3B82F6', r: 36, vi: 'Buổi học' },
+  Chapter: { fill: '#DBEAFE', stroke: '#3B82F6', r: 36, vi: 'Chương' },
   LO: { fill: '#A7E8C5', stroke: '#5CB88A', r: 34, vi: 'Chuẩn đầu ra' },
   Assignment: { fill: '#FFB3AE', stroke: '#E0706A', r: 32, vi: 'Bài tập' },
   Concept: { fill: '#A6D8FA', stroke: '#58A4D8', r: 30, vi: 'Khái niệm' },
@@ -661,19 +661,36 @@ export function extractChapterMeta(node: KnowledgeGraphNode): {
     props.clusterName;
   const titleStr = typeof rawTitle === 'string' && rawTitle.trim() ? rawTitle.trim() : '';
 
+  const normalizeChapterLabel = (num: number, title: string): { code: string; name: string } => {
+    const code = `Chương ${num}`;
+    if (!title || /^(Tuần|Week|Chương|Chapter)\s+\d+$/i.test(title)) {
+      return { code, name: code };
+    }
+    if (/^(Chương|Chapter)\s+/i.test(title)) {
+      return { code, name: title };
+    }
+    if (/^(Tuần|Week)\s+\d+/i.test(title)) {
+      return { code, name: title.replace(/^(Tuần|Week)\s+(\d+)/i, 'Chương $2') };
+    }
+    return { code, name: `${code}: ${title}` };
+  };
+
   if (typeof rawChapter === 'string' && rawChapter.trim()) {
     const clean = rawChapter.trim();
     const match = clean.match(/\d+/);
-    const num = match ? Number(match[0]) : 500;
-    const code = match ? `Buổi học ${match[0]}` : clean;
-    const name = titleStr ? `${code}: ${titleStr}` : code;
-    return { key: clean, code, name, sortOrder: num };
+    if (match) {
+      const num = Number(match[0]);
+      const formatted = normalizeChapterLabel(num, titleStr);
+      return { key: clean, code: formatted.code, name: formatted.name, sortOrder: num };
+    }
+    const name = titleStr ? `${clean}: ${titleStr}` : clean;
+    return { key: clean, code: clean, name, sortOrder: 500 };
   }
 
-  const week = props.default_week ?? props.defaultWeek;
+  const week = props.default_week ?? props.defaultWeek ?? props.week;
   if (typeof week === 'number' && Number.isFinite(week)) {
-    const code = `Buổi học ${week}`;
-    return { key: `ch${week}`, code, name: titleStr ? `${code}: ${titleStr}` : code, sortOrder: week };
+    const formatted = normalizeChapterLabel(week, titleStr);
+    return { key: `ch${week}`, code: formatted.code, name: formatted.name, sortOrder: week };
   }
 
   return { key: 'general', code: 'Tổng quan', name: 'Nội dung chung', sortOrder: 9999 };

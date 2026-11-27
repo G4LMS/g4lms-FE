@@ -59,6 +59,15 @@ export default function CourseFilesPage() {
     if (inputRef.current) inputRef.current.value = '';
   };
 
+  const handleDownload = async (file: CourseFile) => {
+    setActionError('');
+    try {
+      await api.downloadCourseFile(courseId, file.id, file.name);
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : (isVi ? 'Không thể tải tệp xuống.' : 'Download failed.'));
+    }
+  };
+
   const upload = async (event: FormEvent) => {
     event.preventDefault();
     if (selectedFiles.length === 0) return;
@@ -148,7 +157,11 @@ export default function CourseFilesPage() {
                 <strong>{file.name}</strong>
                 <span>{file.mimeType} · {formatBytes(file.sizeBytes)} · {new Date(file.uploadedAt).toLocaleDateString(isVi ? 'vi-VN' : 'en-US')}</span>
               </div>
-              {file.downloadUrl && <a className="btn btn-outline sm" href={file.downloadUrl}>{isVi ? 'Tải xuống' : 'Download'}</a>}
+              {file.downloadUrl && (
+                <button type="button" className="btn btn-outline sm" onClick={() => void handleDownload(file)}>
+                  {isVi ? 'Tải xuống' : 'Download'}
+                </button>
+              )}
             </article>
           ))}
         </section>

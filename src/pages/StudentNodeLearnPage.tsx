@@ -106,44 +106,49 @@ export default function StudentNodeLearnPage() {
 
   const evidenceList: EvidenceItem[] = rawEvidence.length > 0 ? rawEvidence : (richFallback?.evidence ?? []);
 
+  const authoredContents = nodeDetail?.contents ?? [];
+
   const contentBlocks = useMemo(() => {
     const blocks: Array<{ title: string; body?: string; source?: string }> = [];
-    const detailsToUse: DetailItem[] = rawDetails.length > 0 ? rawDetails : (richFallback?.details ?? []);
-    detailsToUse.forEach((d) => {
-      if (d.name) {
-        const ev = d.evidence?.[0];
-        blocks.push({
-          title: d.name,
-          body: ev?.quote ? `"${ev.quote}"` : undefined,
-          source: ev?.slide_id ?? ev?.slideId,
-        });
-      }
-    });
-    rawAspects.forEach((a) => {
-      if (a.name) {
-        blocks.push({
-          title: a.name,
-          source: a.slide_ids?.length ? `Slide: ${a.slide_ids.join(', ')}` : undefined,
-        });
-      }
-    });
-    return blocks;
-  }, [rawDetails, rawAspects, richFallback]);
-
-  const matchingQuiz = useMemo(() => {
-    const list = courseQuizzes ?? [];
-    if (!list.length) return null;
-    const chapterRaw = String(props.chapter_id ?? props.chapterId ?? '').toLowerCase();
-    const chNum = chapterRaw.match(/\d+/)?.[0];
-    if (chNum) {
-      const byChapter = list.find((q) => q.id.includes(`ch${chNum}`) || q.title.toLowerCase().includes(`buổi học ${chNum}`));
-      if (byChapter) return byChapter;
+    if (authoredContents.length === 0) {
+      const detailsToUse: DetailItem[] = rawDetails.length > 0 ? rawDetails : (richFallback?.details ?? []);
+      detailsToUse.forEach((d) => {
+        if (d.name) {
+          const ev = d.evidence?.[0];
+          blocks.push({
+            title: d.name,
+            body: ev?.quote ? `"${ev.quote}"` : undefined,
+            source: ev?.slide_id ?? ev?.slideId,
+          });
+        }
+      });
+      rawAspects.forEach((a) => {
+        if (a.name) {
+          blocks.push({
+            title: a.name,
+            source: a.slide_ids?.length ? `Slide: ${a.slide_ids.join(', ')}` : undefined,
+          });
+        }
+      });
     }
-    return list[0];
-  }, [courseQuizzes, props]);
+    return blocks;
+  }, [authoredContents.length, rawDetails, rawAspects, richFallback]);
+
+  const matchingQuizzes = useMemo(() => {
+    const list = courseQuizzes ?? [];
+    if (!list.length) return [];
+    const byIdOrConcept = list.filter(
+      (q) =>
+        (nodeDetail?.quizIds?.includes(q.id) ?? false) ||
+        q.conceptId === decodedNodeId,
+    );
+    if (byIdOrConcept.length > 0) return byIdOrConcept;
+    const courseWide = list.filter((q) => !q.conceptId);
+    return courseWide;
+  }, [courseQuizzes, nodeDetail?.quizIds, decodedNodeId]);
 
   const durationMin = props.duration_min ?? props.durationMin;
-  const defaultWeek = props.default_week ?? props.defaultWeek;
+  const defaultWeek = props.default_week ?? props.defaultWeek ?? props.week;
   const nodeName = nodeModel?.node.name ?? nodeDetail?.title ?? decodedNodeId;
   const rawDesc = nodeModel?.node.description || '';
   const nodeDesc =
@@ -180,8 +185,12 @@ export default function StudentNodeLearnPage() {
               <Clock size={11} style={{ marginRight: 4 }} /> {String(durationMin)} phút
             </span>
           )}
-          {defaultWeek != null && (
-            <span className="pill-badge muted">Buổi học {String(defaultWeek)}</span>
+          {(nodeDetail?.chapterTitle || typeof props.chapter_title === 'string' || defaultWeek != null) && (
+            <span className="pill-badge muted">
+              {nodeDetail?.chapterTitle ||
+                (typeof props.chapter_title === 'string' && props.chapter_title.trim()) ||
+                `Chương ${String(defaultWeek)}`}
+            </span>
           )}
         </div>
 
@@ -216,12 +225,12 @@ export default function StudentNodeLearnPage() {
                     <Check size={14} /> {isVi ? 'Xem nội dung' : 'View content'}
                   </span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: isMastered ? 'var(--green)' : 'var(--muted)', fontWeight: isMastered ? 600 : 400 }}>
-                    {isMastered ? <Check size={14} /> : <Circle size={13} />} {isVi ? 'Đạt bài kiểm tra ≥ 70%' : 'Pass quiz ≥ 70%'}
+                    {isMastered ? <Check size={14} /> : <Circle size={13} />} {isVi ? `Đạt bài kiểm tra ≥ ${matchingQuizzes[0]?.passScorePct ?? 70}%` : `Pass quiz ≥ ${matchingQuizzes[0]?.passScorePct ?? 70}%`}
                   </span>
                   <span className="muted-s" style={{ marginLeft: 'auto' }}>
                     {isMastered
                       ? (isVi ? 'Đã hoàn thành & mở khóa bài tiếp theo' : 'Completed & unlocked next')
-                      : (isVi ? 'Hệ thống tự động hoàn thành khi đạt ≥ 70%' : 'Auto-completed when quiz ≥ 70%')}
+                      : (isVi ? `Hệ thống tự động hoàn thành khi đạt ≥ ${matchingQuizzes[0]?.passScorePct ?? 70}%` : `Auto-completed when quiz ≥ ${matchingQuizzes[0]?.passScorePct ?? 70}%`)}
                   </span>
                 </div>
               </div>
@@ -252,19 +261,72 @@ export default function StudentNodeLearnPage() {
                       </div>
                     )}
 
-                    <div
-                      style={{
-                        padding: '14px 16px',
-                        borderRadius: 10,
-                        background: '#f8fafc',
-                        border: '1px solid var(--line)',
-                        fontSize: 14.5,
-                        lineHeight: 1.7,
-                        color: 'var(--text)',
-                      }}
-                    >
-                      {nodeDesc || `${nodeName} là một khái niệm trọng tâm trong môn ${courseId}, giúp hình thành nền tảng cho các chủ đề tiếp theo.`}
-                    </div>
+                    {(nodeDesc || authoredContents.length === 0) && (
+                      <div
+                        style={{
+                          padding: '14px 16px',
+                          borderRadius: 10,
+                          background: '#f8fafc',
+                          border: '1px solid var(--line)',
+                          fontSize: 14.5,
+                          lineHeight: 1.7,
+                          color: 'var(--text)',
+                        }}
+                      >
+                        {nodeDesc || `${nodeName} là một khái niệm trọng tâm trong môn ${courseId}, giúp hình thành nền tảng cho các chủ đề tiếp theo.`}
+                      </div>
+                    )}
+
+                    {authoredContents.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {authoredContents.map((c) => (
+                          <div
+                            key={c.id}
+                            style={{
+                              padding: '14px 16px',
+                              borderRadius: 10,
+                              border: '1px solid var(--line)',
+                              borderLeft: c.role === 'example' ? '3px solid #16a34a' : '3px solid var(--primary)',
+                              background: '#ffffff',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 8,
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span className={`pill-badge ${c.role === 'example' ? 'ok' : 'blue'}`}>
+                                  {c.role === 'example' ? (isVi ? 'Ví dụ minh họa' : 'Example') : (isVi ? 'Lý thuyết / Định nghĩa' : 'Definition')}
+                                </span>
+                                <strong style={{ fontSize: 15, color: 'var(--ink)' }}>{c.title}</strong>
+                              </div>
+                              {c.pageFrom != null && (
+                                <span className="pill-badge muted" style={{ fontSize: 11 }}>
+                                  {isVi
+                                    ? `Trang ${c.pageFrom}${c.pageTo && c.pageTo !== c.pageFrom ? `–${c.pageTo}` : ''}`
+                                    : `Pages ${c.pageFrom}${c.pageTo && c.pageTo !== c.pageFrom ? `-${c.pageTo}` : ''}`}
+                                </span>
+                              )}
+                            </div>
+                            {c.bodyText && (
+                              <div style={{ fontSize: 14.5, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                                {c.bodyText}
+                              </div>
+                            )}
+                            {c.url && (
+                              <a
+                                href={c.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ fontSize: 13, color: 'var(--primary)', wordBreak: 'break-all' }}
+                              >
+                                {c.url}
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
                     {evidenceList.filter((ev) => ev.quote).length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -339,9 +401,6 @@ export default function StudentNodeLearnPage() {
                           const isGeneric = cnt.description?.startsWith('Tài liệu bài giảng giải thích chi tiết');
                           const displayQuote = isGeneric ? (evidenceList[0]?.quote ?? '') : (cnt.description ?? '');
                           if (!displayQuote && isGeneric) return null;
-                          const isMastered =
-    String(props.learning_state ?? props.learningState ?? '') === 'mastered' ||
-    (typeof props.mastery === 'number' && props.mastery >= 70);
 
   return (
                             <div
@@ -388,33 +447,41 @@ export default function StudentNodeLearnPage() {
                     </p>
                   </div>
 
-                  {matchingQuiz ? (
-                    <div
-                      style={{
-                        padding: '16px 18px',
-                        borderRadius: 10,
-                        border: '1px solid var(--line)',
-                        background: '#f8fafc',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 14,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--ink)' }}>{matchingQuiz.title}</div>
-                        <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
-                          {matchingQuiz.questions.length} câu hỏi · {matchingQuiz.timeLimitMinutes} phút · {isVi ? 'Không giới hạn số lần làm' : 'Unlimited attempts'}
+                  {matchingQuizzes.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {matchingQuizzes.map((qz) => (
+                        <div
+                          key={qz.id}
+                          style={{
+                            padding: '16px 18px',
+                            borderRadius: 10,
+                            border: '1px solid var(--line)',
+                            background: '#f8fafc',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 14,
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--ink)' }}>{qz.title}</div>
+                            {qz.description && (
+                              <div style={{ fontSize: 13, color: 'var(--text)', marginTop: 2 }}>{qz.description}</div>
+                            )}
+                            <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+                              {qz.questions.length} câu hỏi · {qz.timeLimitMinutes} phút · Ngưỡng đạt ≥ {qz.passScorePct ?? 70}% · {isVi ? 'Không giới hạn số lần làm' : 'Unlimited attempts'}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => navigate(`/courses/${courseId}/quizzes/${qz.id}?nodeId=${encodeURIComponent(decodedNodeId)}`)}
+                          >
+                            {isVi ? 'Làm bài kiểm tra' : 'Start quiz'}
+                          </button>
                         </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => navigate(`/courses/${courseId}/quizzes/${matchingQuiz.id}?nodeId=${encodeURIComponent(decodedNodeId)}`)}
-                      >
-                        {isVi ? 'Làm bài kiểm tra' : 'Start quiz'}
-                      </button>
+                      ))}
                     </div>
                   ) : (
                     <p className="muted-s">{isVi ? 'Chưa có bài Quiz riêng cho khái niệm này.' : 'No quiz linked to this concept yet.'}</p>

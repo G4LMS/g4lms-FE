@@ -1,11 +1,12 @@
-import { Bell, CalendarCheck, ChevronDown, ChevronRight, ClipboardList, FileText, FolderOpen, Plus, Search, SlidersHorizontal, Users } from 'lucide-react';
+import { Bell, CalendarCheck, ChevronRight, FolderOpen, Search, SlidersHorizontal, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { AppHeader } from '../features/layout/AppHeader';
 import { useAsync } from '../features/common/useAsync';
 import { useLanguage } from '../features/i18n/LanguageContext';
-import type { CourseSection, RosterStudent, TeacherCourseTopic, TeacherGradeRow } from '../types';
+import { ConceptAuthoringWorkspace } from '../features/teacher/ConceptAuthoringWorkspace';
+import type { RosterStudent, TeacherGradeRow } from '../types';
 
 const TABS = [
   ['graph', 'Lộ trình'],
@@ -16,15 +17,11 @@ const TABS = [
 export default function TeacherCourseDetailPage() {
   const { courseId = '', tab = 'content' } = useParams();
   const nav = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialNodeId = searchParams.get('nodeId');
   const { language } = useLanguage();
   const [query, setQuery] = useState('');
   const [progressFilter, setProgressFilter] = useState<'all' | 'good' | 'mid' | 'low'>('all');
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({ materials: true, overview: true, ch1: true });
-  const [sections, setSections] = useState<CourseSection[]>([]);
-  const [addingSection, setAddingSection] = useState(false);
-  const [newSectionTitle, setNewSectionTitle] = useState('');
-  const [creatingSection, setCreatingSection] = useState(false);
-  const [sectionError, setSectionError] = useState('');
   const [studentSubTab, setStudentSubTab] = useState<'overview' | 'gradebook' | 'attendance'>(
     tab === 'grades' ? 'gradebook' : 'overview',
   );
@@ -34,18 +31,10 @@ export default function TeacherCourseDetailPage() {
     useAsync<RosterStudent[]>(() => api.getTeacherRoster(courseId), [courseId]);
   const { data: gradebookData, loading: gradebookLoading, error: gradebookError } =
     useAsync<TeacherGradeRow[]>(() => api.getTeacherGradebook(courseId), [courseId]);
-  const { data: topicData, loading: topicsLoading, error: topicsError } =
-    useAsync<TeacherCourseTopic[]>(() => api.getTeacherCourseTopics(courseId), [courseId]);
-  const { data: sectionData } =
-    useAsync(() => api.getCourseSections(courseId).catch(() => []), [courseId]);
   const { data: attendanceData } =
     useAsync(() => api.getTeacherAttendance(courseId).catch(() => []), [courseId]);
-  const { data: assignmentsData } =
-    useAsync(() => api.getAssignments(courseId, 'teacher').catch(() => []), [courseId]);
-  const { data: quizzesData } =
-    useAsync(() => api.getQuizzes(courseId, 'teacher').catch(() => []), [courseId]);
-  const { data: filesData } =
-    useAsync(() => api.getCourseFiles(courseId).catch(() => []), [courseId]);
+  const { data: conceptOverview } =
+    useAsync(() => api.getCourseConceptsContentOverview(courseId).catch(() => null), [courseId]);
 
   const roster = rosterData ?? [];
   const [gradebook, setGradebook] = useState<TeacherGradeRow[]>([]);
@@ -60,7 +49,7 @@ export default function TeacherCourseDetailPage() {
   const [gradeError, setGradeError] = useState('');
   const [savingGrade, setSavingGrade] = useState(false);
 
-  const defaultWeights = { midterm: 30, project: 25, final: 35, attendance: 10 };
+  const defaultWeights = { midterm: 25, project: 20, final: 45, attendance: 10 };
   const [weights, setWeights] = useState(() => {
     try {
       const raw = localStorage.getItem(`g4lms.gradeWeights.${courseId}`);
@@ -79,7 +68,7 @@ export default function TeacherCourseDetailPage() {
       (row.midterm * weights.midterm +
         row.project * weights.project +
         row.final * weights.final +
-        (row.attendance / 10) * weights.attendance) /
+        row.attendance * weights.attendance) /
       100
     ).toFixed(1));
   };
@@ -88,11 +77,6 @@ export default function TeacherCourseDetailPage() {
     if (gradebookData) setGradebook(gradebookData);
   }, [gradebookData]);
 
-  useEffect(() => {
-    if (sectionData) setSections(sectionData);
-  }, [sectionData]);
-
-  const topics = topicData ?? [];
   const courseName = courseData?.find((course) => course.id === courseId)?.title ?? courseId;
 
   const students = useMemo(
@@ -154,7 +138,7 @@ export default function TeacherCourseDetailPage() {
   return (
     <div className="page course-detail-page teacher-course-detail">
       <AppHeader />
-      <main className="container course-detail-content">
+      <main className={`container course-detail-content${tab === 'content' ? ' wide' : ''}`}>
         <h1>{courseName}</h1>
         {coursesError && <p className="form-error" role="alert">{coursesError.message}</p>}
         <div className="tabs-pill course-detail-tabs">
@@ -176,186 +160,35 @@ export default function TeacherCourseDetailPage() {
         </div>
 
         {tab === 'content' && (
-          <div className="course-detail-sections">
-            <section className="course-activity-section" aria-labelledby="teacher-activity-heading">
-              <h2 id="teacher-activity-heading">{isVi ? 'Hoạt động môn học' : 'Course activities'}</h2>
-              <div className="course-activity-links">
-                <Link to={`/teacher/courses/${courseId}/announcements`}>
-                  <Bell size={17} />{isVi ? 'Quản lý Thông báo' : 'Manage Announcements'}<ChevronRight size={15} />
-                </Link>
-                <Link to={`/teacher/courses/${courseId}/attendance`}>
-                  <CalendarCheck size={17} />{isVi ? 'Quản lý Điểm danh' : 'Manage Attendance'}<ChevronRight size={15} />
-                </Link>
-                <Link to={`/teacher/courses/${courseId}/files`}>
-                  <FolderOpen size={17} />{isVi ? 'Quản lý Tài liệu / Slide' : 'Manage Files / Slides'}<ChevronRight size={15} />
-                </Link>
-                <Link to={`/teacher/courses/${courseId}/adaptive`}>
-                  <SlidersHorizontal size={17} />{isVi ? 'Cài đặt thích ứng' : 'Adaptive settings'}<ChevronRight size={15} />
-                </Link>
-              </div>
-            </section>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-              <button
-                type="button"
-                className="btn btn-primary sm"
-                onClick={() => setAddingSection((v) => !v)}
-              >
-                <Plus size={13} /> {isVi ? 'Thêm buổi học / khung mới' : 'Add session / section'}
-              </button>
-              <button type="button" className="course-collapse-all" onClick={() => setOpenSections({})}>
-                {isVi ? 'Thu gọn toàn bộ' : 'Collapse all'}
-              </button>
+          <div className="teacher-content-workspace-wrap">
+            <div className="teacher-activity-strip" aria-label={isVi ? 'Hoạt động môn học' : 'Course activities'}>
+              <Link to={`/teacher/courses/${courseId}/announcements`}>
+                <Bell size={15} /> {isVi ? 'Quản lý Thông báo' : 'Manage Announcements'} <ChevronRight size={13} />
+              </Link>
+              <Link to={`/teacher/courses/${courseId}/attendance`}>
+                <CalendarCheck size={15} /> {isVi ? 'Quản lý Điểm danh' : 'Manage Attendance'} <ChevronRight size={13} />
+              </Link>
+              <Link to={`/teacher/courses/${courseId}/files`}>
+                <FolderOpen size={15} /> {isVi ? 'Quản lý Tài liệu / Slide' : 'Manage Files / Slides'} <ChevronRight size={13} />
+              </Link>
+              <Link to={`/teacher/courses/${courseId}/adaptive`}>
+                <SlidersHorizontal size={15} /> {isVi ? 'Cài đặt thích ứng' : 'Adaptive settings'} <ChevronRight size={13} />
+              </Link>
             </div>
-
-            {addingSection && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: 12, borderRadius: 8, border: '1px solid var(--line)', background: 'var(--bg)' }}>
-                <input
-                  type="text"
-                  value={newSectionTitle}
-                  onChange={(e) => setNewSectionTitle(e.target.value)}
-                  placeholder={isVi ? 'Ví dụ: Buổi học 6: Thuật toán nâng cao...' : 'e.g. Session 6: Advanced Algorithms...'}
-                  style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff' }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-primary sm"
-                  disabled={creatingSection || !newSectionTitle.trim()}
-                  onClick={async () => {
-                    const title = newSectionTitle.trim();
-                    if (!title || creatingSection) return;
-                    setCreatingSection(true);
-                    setSectionError('');
-                    try {
-                      const created = await api.createCourseSection(courseId, { titleVi: title, titleEn: title });
-                      setSections((prev) => [...prev, created]);
-                      setOpenSections((c) => ({ ...c, [created.id]: true }));
-                      setNewSectionTitle('');
-                      setAddingSection(false);
-                    } catch (reason) {
-                      setSectionError(reason instanceof Error ? reason.message : 'Không thể tạo buổi học mới.');
-                    } finally {
-                      setCreatingSection(false);
-                    }
-                  }}
-                >
-                  {creatingSection ? (isVi ? 'Đang tạo...' : 'Creating...') : (isVi ? 'Tạo khung' : 'Create')}
-                </button>
-                <button type="button" className="btn btn-outline sm" onClick={() => setAddingSection(false)}>
-                  {isVi ? 'Hủy' : 'Cancel'}
-                </button>
-              </div>
-            )}
-            {sectionError && <p className="form-error" role="alert">{sectionError}</p>}
-
-            {/* Các khung nội dung môn học (Tài liệu + từng Buổi học tích hợp Bài tập, Quiz, Tệp) */}
-            {topicsError && <p className="form-error" role="alert">{topicsError.message}</p>}
-            {topicsLoading && <p className="muted">{isVi ? 'Đang tải nội dung...' : 'Loading course content...'}</p>}
-            {(() => {
-              const contentSections = sections.filter(
-                (s) => !['announcements', 'assignments', 'quizzes', 'materials', 'overview'].includes(s.id),
-              );
-              const chapterSections = contentSections;
-              const allAssignments = assignmentsData ?? [];
-              const allQuizzes = quizzesData ?? [];
-              const allFiles = filesData ?? [];
-
-              return contentSections.map((section) => {
-                const open = !!openSections[section.id];
-                const chIdx = chapterSections.findIndex((c) => c.id === section.id);
-                const isChapter = chIdx >= 0;
-
-                const chapterAssignments = isChapter
-                  ? allAssignments.filter((_, i) => i % Math.max(1, chapterSections.length) === chIdx)
-                  : [];
-                const chapterQuizzes = isChapter
-                  ? allQuizzes.filter((qz, i) => {
-                      const numMatch = section.id.match(/\d+/)?.[0];
-                      if (numMatch && (qz.id.includes(`ch${numMatch}`) || qz.title.toLowerCase().includes(`quiz ${numMatch}`))) {
-                        return true;
-                      }
-                      return i % Math.max(1, chapterSections.length) === chIdx;
-                    })
-                  : [];
-                const chapterFiles =
-                  section.id === 'materials' || section.id === 'overview'
-                    ? allFiles
-                    : [];
-
-                return (
-                  <div className="course-detail-section" key={section.id}>
-                    <button
-                      type="button"
-                      className="course-detail-section-head"
-                      aria-expanded={open}
-                      onClick={() => setOpenSections((c) => ({ ...c, [section.id]: !c[section.id] }))}
-                    >
-                      <span className="course-section-title">
-                        {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                        {isVi ? section.titleVi : section.titleEn}
-                      </span>
-                    </button>
-                    {open && (
-                      <div className="course-resource-list">
-                        {section.items
-                          .filter((item) => item.kind !== 'quiz')
-                          .map((item) => (
-                            <div key={item.id} className="course-resource">
-                              <FileText size={16} />
-                              <span>{isVi ? item.nameVi : item.nameEn}</span>
-                              <small>{item.kind.toUpperCase()}</small>
-                            </div>
-                          ))}
-                        {chapterFiles.map((f) => (
-                          <Link to={`/teacher/courses/${courseId}/files`} key={f.id} className="course-resource">
-                            <FolderOpen size={16} />
-                            <span>{f.name}</span>
-                            <small>{Math.max(1, Math.round(f.sizeBytes / 1024))} KB</small>
-                          </Link>
-                        ))}
-                        {chapterAssignments.map((asg) => (
-                          <Link to={`/teacher/courses/${courseId}/assignments`} key={asg.id} className="course-resource">
-                            <ClipboardList size={16} />
-                            <span>{asg.title}</span>
-                            <small>{asg.status === 'published' ? (isVi ? 'Bài tập · Đã công bố' : 'Assignment · Published') : (isVi ? 'Bài tập · Nháp' : 'Assignment · Draft')}</small>
-                          </Link>
-                        ))}
-                        {chapterQuizzes.map((qz) => (
-                          <Link to={`/teacher/courses/${courseId}/quizzes`} key={qz.id} className="course-resource">
-                            <FileText size={16} />
-                            <span>{qz.title}</span>
-                            <small>Quiz · {qz.questions.length} câu · {qz.timeLimitMinutes}p</small>
-                          </Link>
-                        ))}
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingTop: 6 }}>
-                          <Link to={`/teacher/courses/${courseId}/assignments`} className="btn btn-outline sm">
-                            {isVi ? '+ Thêm Bài tập' : '+ Add Assignment'}
-                          </Link>
-                          <Link to={`/teacher/courses/${courseId}/quizzes`} className="btn btn-outline sm">
-                            {isVi ? '+ Thêm Quiz' : '+ Add Quiz'}
-                          </Link>
-                          <Link to={`/teacher/courses/${courseId}/files`} className="btn btn-outline sm">
-                            {isVi ? '+ Tải Tệp / Slide' : '+ Upload File'}
-                          </Link>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              });
-            })()}
-
-            {!(sectionData ?? []).some((s) => s.id.startsWith('ch')) &&
-              topics.map((topic) => (
-                <div className="course-detail-section" key={topic.id}>
-                  <div className="course-detail-section-head">
-                    <span className="course-section-title">
-                      <b>{topic.number}</b> · {isVi ? topic.titleVi : topic.titleEn}
-                    </span>
-                    <small className="muted-s">{topic.resources.join(' · ')}</small>
-                  </div>
-                </div>
-              ))}
+            <div className="teacher-concept-workspace-host">
+              <ConceptAuthoringWorkspace
+                courseId={courseId}
+                courseName={courseName}
+                initialConceptId={initialNodeId}
+                onSelectConceptId={(nextId) => {
+                  if (nextId) {
+                    setSearchParams({ nodeId: nextId }, { replace: true });
+                  }
+                }}
+                onBackToGraph={() => nav(`/teacher/courses/${courseId}/graph`)}
+                onOpenAuthoringWizard={() => nav(`/teacher/courses/${courseId}/graph?view=authoring`)}
+              />
+            </div>
           </div>
         )}
 
@@ -404,7 +237,7 @@ export default function TeacherCourseDetailPage() {
             </div>
 
             {studentSubTab === 'overview' && (() => {
-              const totalConcepts = courseId === 'CO3093' ? 28 : 24;
+              const totalConcepts = conceptOverview?.totalConcepts ?? 0;
               const avgProgress = roster.length
                 ? Math.round(roster.reduce((sum, s) => sum + s.progress, 0) / roster.length)
                 : 0;
@@ -417,9 +250,6 @@ export default function TeacherCourseDetailPage() {
                 if (progressFilter === 'low') return s.progress < 50;
                 return true;
               });
-              const weakConcepts = courseId === 'CO3093'
-                ? ['TCP Congestion Control', 'Subnets & CIDR', 'DNS Caching', 'Link-State Routing']
-                : ['Cấp phát động & Con trỏ', 'Xóa node Danh sách liên kết', 'Phép xoay cây AVL', 'Dijkstra'];
 
               return (
                 <>
@@ -478,8 +308,11 @@ export default function TeacherCourseDetailPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredProgressStudents.map((student, idx) => {
-                          const masteredCount = Math.round((student.progress / 100) * totalConcepts);
+                        {filteredProgressStudents.map((student) => {
+                          const rowTotalConcepts = student.totalConcepts ?? totalConcepts;
+                          const masteredCount =
+                            student.masteredConcepts ??
+                            (rowTotalConcepts > 0 ? Math.round((student.progress / 100) * rowTotalConcepts) : 0);
                           const barColor = student.progress >= 80 ? '#16a34a' : student.progress >= 50 ? '#0284c7' : '#dc2626';
                           const statusLabel =
                             student.progress >= 80
@@ -487,6 +320,7 @@ export default function TeacherCourseDetailPage() {
                               : student.progress >= 50
                                 ? (isVi ? 'Đúng tiến độ' : 'On track')
                                 : (isVi ? 'Cần hỗ trợ' : 'Needs help');
+                          const weakList = student.weakConceptTitles ?? [];
                           const formatDateTime = (iso?: string) => {
                             if (!iso) return '—';
                             const d = new Date(iso);
@@ -503,12 +337,17 @@ export default function TeacherCourseDetailPage() {
                               </td>
                               <td style={{ width: 95 }}>
                                 <b style={{ color: barColor }}>{student.progress}%</b>
+                                {(student.quizzesTotal ?? 0) > 0 && (
+                                  <div className="muted-xs">
+                                    Quiz {student.quizzesPassed ?? 0}/{student.quizzesTotal}
+                                  </div>
+                                )}
                               </td>
-                              <td>{masteredCount}/{totalConcepts}</td>
+                              <td>{rowTotalConcepts > 0 ? `${masteredCount}/${rowTotalConcepts}` : '—'}</td>
                               <td>
-                                {student.progress < 75 ? (
+                                {weakList.length > 0 ? (
                                   <span className="muted-s" style={{ color: '#b45309' }}>
-                                    {weakConcepts[idx % weakConcepts.length]}
+                                    {weakList.join(', ')}
                                   </span>
                                 ) : (
                                   <span className="muted-xs">—</span>
@@ -558,7 +397,7 @@ export default function TeacherCourseDetailPage() {
                   <table>
                     <thead>
                       <tr>
-                        <th>{isVi ? 'Buổi học' : 'Session'}</th>
+                        <th>{isVi ? 'Buổi điểm danh' : 'Session'}</th>
                         <th>{isVi ? 'Ngày' : 'Date'}</th>
                         <th>{isVi ? 'Trạng thái' : 'Status'}</th>
                         <th>{isVi ? 'Có mặt' : 'Present'}</th>
@@ -662,6 +501,7 @@ export default function TeacherCourseDetailPage() {
                   <tr>
                     <th>{isVi ? 'Mã SV' : 'Student ID'}</th>
                     <th>{isVi ? 'Họ tên' : 'Name'}</th>
+                    <th>{isVi ? 'Quiz Khái niệm' : 'Concept Quizzes'}</th>
                     <th>{isVi ? `Giữa kỳ (${weights.midterm}%)` : `Midterm (${weights.midterm}%)`}</th>
                     <th>BTL ({weights.project}%)</th>
                     <th>{isVi ? `Cuối kỳ (${weights.final}%)` : `Final (${weights.final}%)`}</th>
@@ -677,6 +517,21 @@ export default function TeacherCourseDetailPage() {
                       <tr key={student.id}>
                         <td>{student.id}</td>
                         <td><strong>{student.name}</strong></td>
+                        <td>
+                          {(student.quizzesTotal ?? 0) > 0 ? (
+                            <div>
+                              <strong>{student.quizzesPassed ?? 0}/{student.quizzesTotal}</strong>{' '}
+                              <span className="muted-xs">{isVi ? 'đạt' : 'passed'}</span>
+                              <div className="muted-xs">
+                                {student.quizAvgScore !== null && student.quizAvgScore !== undefined
+                                  ? `TB: ${student.quizAvgScore}/10`
+                                  : (isVi ? 'Chưa làm' : 'Not started')}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="muted-xs">—</span>
+                          )}
+                        </td>
                         <td>
                           {isEditing ? (
                             <input
@@ -727,14 +582,14 @@ export default function TeacherCourseDetailPage() {
                             <input
                               type="number"
                               min="0"
-                              max="100"
-                              step="1"
+                              max="10"
+                              step="0.1"
                               style={{ width: 72 }}
                               value={gradeDraft.attendance}
                               onChange={(e) => setGradeDraft((d) => ({ ...d, attendance: e.target.value }))}
                             />
                           ) : (
-                            student.attendance === null ? '—' : `${student.attendance}%`
+                            student.attendance ?? '—'
                           )}
                         </td>
                         <td>

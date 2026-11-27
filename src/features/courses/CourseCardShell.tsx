@@ -9,15 +9,19 @@ interface Props {
   faculty: string;
   title: string;
   to: string;
+  badge?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
 }
 
-export function CourseCardShell({ code, theme, faculty, title, to, children, footer }: Props) {
+export function CourseCardShell({ code, theme, faculty, title, to, badge, children, footer }: Props) {
   const nav = useNavigate();
   return (
     <article className="course-card">
-      <Link to={to} className={`course-banner theme-${theme}`}><span>{code}</span></Link>
+      <Link to={to} className={`course-banner theme-${theme}`}>
+        <span>{code}</span>
+        {badge && <div className="course-banner-badge">{badge}</div>}
+      </Link>
       <div className="course-body">
         <div className="course-faculty">{faculty}</div>
         <Link to={to} className="course-title">{title}</Link>
