@@ -3451,6 +3451,73 @@ export const mockApi = {
       resumeBlockedReason: job.resumeCount >= job.maxResumeAttempts ? 'RESUME_LIMIT_REACHED' : undefined,
     }, 150);
   },
+  listActiveWorkflowJobs(
+    courseId: string,
+  ): Promise<Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }>> {
+    const out: Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }> = [];
+    for (const [jobId, job] of authoringJobs.entries()) {
+      if (job.courseId !== courseId) continue;
+      if (job.status !== 'QUEUED' && job.status !== 'RUNNING') continue;
+      out.push({
+        jobId,
+        kind: job.kind,
+        status: job.status,
+        progress: job.progress,
+        weekId: job.chapterId ?? job.chapterIds?.[0] ?? null,
+        canResume: false,
+        resumeCount: job.resumeCount,
+        maxResumeAttempts: job.maxResumeAttempts,
+      });
+    }
+    return wait(out, 60);
+  },
+  cancelWorkflowJob(jobId: string): Promise<WorkflowJobResponse> {
+    const job = authoringJobs.get(jobId);
+    if (!job) return Promise.reject(new Error('Không tìm thấy job.'));
+    job.status = 'CANCELLED';
+    job.canResume = job.resumeCount < job.maxResumeAttempts;
+    return wait({
+      jobId,
+      status: 'CANCELLED',
+      progress: job.progress,
+      weekId: job.chapterId ?? job.chapterIds?.[0] ?? null,
+      canResume: job.canResume,
+      resumeCount: job.resumeCount,
+      maxResumeAttempts: job.maxResumeAttempts,
+      cancelRequested: true,
+      rawState: 'cancelled',
+    }, 80);
+  },
+  cancelPendingWorkflowJobs(courseId: string): Promise<{
+    cancelledCount: number;
+    cancelledJobIds: string[];
+    jobs: Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }>;
+  }> {
+    const cancelled: Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }> = [];
+    for (const [jobId, job] of authoringJobs.entries()) {
+      if (job.courseId !== courseId) continue;
+      if (job.status !== 'QUEUED' && job.status !== 'RUNNING') continue;
+      job.status = 'CANCELLED';
+      job.canResume = job.resumeCount < job.maxResumeAttempts;
+      cancelled.push({
+        jobId,
+        kind: job.kind,
+        status: 'CANCELLED',
+        progress: job.progress,
+        weekId: job.chapterId ?? job.chapterIds?.[0] ?? null,
+        canResume: job.canResume,
+        resumeCount: job.resumeCount,
+        maxResumeAttempts: job.maxResumeAttempts,
+        cancelRequested: true,
+        rawState: 'cancelled',
+      });
+    }
+    return wait({
+      cancelledCount: cancelled.length,
+      cancelledJobIds: cancelled.map((j) => j.jobId!).filter(Boolean),
+      jobs: cancelled,
+    }, 80);
+  },
   resumeWorkflowJob(jobId: string, _idempotencyKey: string): Promise<{ jobId: string; status: 'QUEUED' }> {
     const job = authoringJobs.get(jobId);
     if (!job) return Promise.reject(new Error('Không tìm thấy job.'));

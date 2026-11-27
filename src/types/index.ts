@@ -918,7 +918,7 @@ export interface KnowledgeGraphData {
 export type OutlineState = 'DRAFT' | 'OUTLINE_REVIEW' | 'OUTLINE_APPROVED';
 export type ChapterWorkflowState = 'DRAFT' | 'LESSON_REVIEW' | 'LESSON_APPROVED' | 'PUBLISHED';
 export type ReviewDecision = 'PENDING' | 'APPROVE' | 'EDIT' | 'REJECT';
-export type WorkflowJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'BLOCKED' | 'FAILED';
+export type WorkflowJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 
 export interface OutlineChapter {
   id: string;
@@ -970,6 +970,7 @@ export interface OutlineDraftResponse {
   coursePublished?: boolean;
   latestReleaseNo?: number;
   activeJob?: (WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }) | null;
+  activeJobs?: Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }>;
 }
 
 export interface CourseGraphDraftSummary {
@@ -1011,6 +1012,8 @@ export interface WorkflowJobResponse {
   resumeCount: number;
   maxResumeAttempts: number;
   resumeBlockedReason?: string;
+  cancelRequested?: boolean;
+  rawState?: string;
 }
 
 export type AssessmentVerdict = 'supported' | 'revise' | 'unsupported';

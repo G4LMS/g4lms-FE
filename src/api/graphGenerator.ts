@@ -129,19 +129,19 @@ export const graphGenApi = {
 
   getChapter: (courseId: string, chapterId: string) =>
     ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}`,
     ),
   getSourceReadiness: (courseId: string, chapterId: string) =>
     ggRequest<{ status: string; can_generate: boolean; counts: Record<string, number>; warnings: string[]; revision: number }>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/source-readiness`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/source-readiness`,
     ),
   getSourceRevisions: (courseId: string, chapterId: string) =>
     ggRequest<{ items: Array<Record<string, unknown>> }>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/source-revisions`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/source-revisions`,
     ),
   getChapterWorkflow: (courseId: string, chapterId: string) =>
     ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/workflow`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/workflow`,
     ),
 
   attachChapterSources: (
@@ -150,7 +150,7 @@ export const graphGenApi = {
     input: { expected_revision: number; source_id: string; slides: Array<{ page: number; text: string }> },
   ) =>
     ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/sources`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/sources`,
       ggJson('POST', input),
     ),
 
@@ -164,7 +164,7 @@ export const graphGenApi = {
   ) => {
     const buffer = await file.arrayBuffer();
     return ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/pdf/${encodeURIComponent(sourceId)}?expected_revision=${expectedRevision}`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/pdf/${encodeURIComponent(sourceId)}?expected_revision=${expectedRevision}`,
       { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: buffer },
     );
   },
@@ -177,7 +177,7 @@ export const graphGenApi = {
     const path =
       input.kind === 'outline'
         ? `/courses/${encodeURIComponent(courseId)}/outline/generate`
-        : `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/generate`;
+        : `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/generate`;
     return ggRequest<GenJobResponse>(path, ggJson('POST', { budget_usd: 1, ...input }));
   },
 
@@ -187,7 +187,7 @@ export const graphGenApi = {
     input: { expected_revision: number; draft: GenChapterDraft; actor: string },
   ) =>
     ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/draft`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/draft`,
       ggJson('PUT', input),
     ),
 
@@ -197,7 +197,7 @@ export const graphGenApi = {
     input: { expected_revision: number; actor: string },
   ) =>
     ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/approve-nodes`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/approve-nodes`,
       ggJson('POST', input),
     ),
 
@@ -207,7 +207,7 @@ export const graphGenApi = {
     input: { expected_revision: number; actor: string },
   ) =>
     ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/rebase`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/rebase`,
       ggJson('POST', input),
     ),
 
@@ -217,7 +217,7 @@ export const graphGenApi = {
     input: { expected_revision: number; actor: string },
   ) =>
     ggRequest<Record<string, unknown>>(
-      `/courses/${encodeURIComponent(courseId)}/weeks/${encodeURIComponent(chapterId)}/publish`,
+      `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/publish`,
       ggJson('POST', input),
     ),
 

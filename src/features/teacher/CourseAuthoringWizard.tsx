@@ -30,6 +30,7 @@ import {
   Trash2,
   Upload,
   X,
+  XCircle,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
@@ -156,6 +157,7 @@ const JOB_STATUS_INFO: Record<WorkflowJobStatus, { label: string; tone: 'blue' |
   SUCCEEDED: { label: 'Hoàn tất', tone: 'green' },
   BLOCKED: { label: 'Tạm dừng', tone: 'amber' },
   FAILED: { label: 'Thất bại', tone: 'red' },
+  CANCELLED: { label: 'Đã hủy', tone: 'muted' },
 };
 
 function formatJobError(err?: string): string {
@@ -265,9 +267,21 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
 
   // D5 Active Job state
   const [activeJob, setActiveJob] = useState<(WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }) | null>(null);
+  const [pendingJobs, setPendingJobs] = useState<Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }>>([]);
+  const [cancellingJob, setCancellingJob] = useState(false);
   const [usage, setUsage] = useState<CourseUsageSummary | null>(null);
   const [sourceReadiness, setSourceReadiness] = useState<SourceReadinessResponse | null>(null);
   const [d3SourceReadiness, setD3SourceReadiness] = useState<SourceReadinessResponse | null>(null);
+
+  const refreshPendingJobs = useCallback(async () => {
+    try {
+      const jobs = await api.listActiveWorkflowJobs(courseId);
+      setPendingJobs(jobs);
+      setActiveJob((prev) => prev ?? jobs[0] ?? null);
+    } catch {
+      // Ignore transient refresh error
+    }
+  }, [courseId]);
 
   const loadOutline = useCallback(async () => {
     setLoading(true);
@@ -280,15 +294,24 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
       setMasterVersion(res.masterVersion ?? 0);
       setLatestReleaseNo(res.latestReleaseNo ?? 0);
       setCoursePublishedFromBe(Boolean(res.coursePublished));
+      const initialPending =
+        res.activeJobs ??
+        (res.activeJob && (res.activeJob.status === 'QUEUED' || res.activeJob.status === 'RUNNING')
+          ? [res.activeJob]
+          : []);
+      setPendingJobs(initialPending);
       if (res.activeJob && res.activeJob.status !== 'SUCCEEDED') {
         setActiveJob({
           kind: res.activeJob.kind,
           jobId: res.activeJob.jobId,
           status: res.activeJob.status,
           progress: res.activeJob.progress ?? 0,
-          canResume: res.activeJob.status === 'BLOCKED' || res.activeJob.status === 'FAILED',
-          resumeCount: 0,
-          maxResumeAttempts: 3,
+          weekId: res.activeJob.weekId,
+          stageLabel: res.activeJob.stageLabel,
+          canResume: res.activeJob.canResume ?? (res.activeJob.status === 'BLOCKED' || res.activeJob.status === 'FAILED'),
+          resumeCount: res.activeJob.resumeCount ?? 0,
+          maxResumeAttempts: res.activeJob.maxResumeAttempts ?? 3,
+          cancelRequested: res.activeJob.cancelRequested,
         });
       }
       if (res.outline.chapters.length && !selectedChapterId) {
@@ -507,13 +530,26 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
   // D5 Job Polling
   useEffect(() => {
     if (!activeJob?.jobId) return;
-    if (activeJob.status === 'SUCCEEDED' || activeJob.status === 'BLOCKED' || activeJob.status === 'FAILED') {
+    if (
+      activeJob.status === 'SUCCEEDED' ||
+      activeJob.status === 'BLOCKED' ||
+      activeJob.status === 'FAILED' ||
+      activeJob.status === 'CANCELLED'
+    ) {
       return;
     }
     const timer = window.setTimeout(async () => {
       try {
         const latest = await api.getWorkflowJob(activeJob.jobId!);
         setActiveJob((prev) => (prev ? { ...latest, jobId: prev.jobId, kind: prev.kind } : null));
+        if (
+          latest.status === 'SUCCEEDED' ||
+          latest.status === 'BLOCKED' ||
+          latest.status === 'FAILED' ||
+          latest.status === 'CANCELLED'
+        ) {
+          setPendingJobs((prev) => prev.filter((j) => j.jobId !== activeJob.jobId));
+        }
         if (latest.status === 'SUCCEEDED') {
           if (activeJob.kind === 'outline') {
             setMessage('AI đã trích xuất xong Khung môn học (Chương & Chuẩn đầu ra). Hãy rà soát và duyệt.');
@@ -530,6 +566,8 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
             setReviewLoading(true);
             void loadStep3Workspace().finally(() => setReviewLoading(false));
           }
+        } else if (latest.status === 'CANCELLED') {
+          setMessage('Tác vụ AI đang chờ đã được hủy.');
         }
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : 'Lỗi khi theo dõi tiến độ job.');
@@ -543,10 +581,60 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
     setError('');
     try {
       const res = await api.resumeWorkflowJob(activeJob.jobId, newIdempotencyKey('resume'));
-      setActiveJob((prev) => (prev ? { ...prev, status: res.status } : null));
+      setActiveJob((prev) => (prev ? { ...prev, status: res.status, cancelRequested: false } : null));
       setMessage('Đã xếp lại job từ checkpoint gần nhất.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Không thể tiếp tục job.');
+    }
+  };
+
+  const handleCancelJob = async () => {
+    if (!activeJob?.jobId) return;
+    setCancellingJob(true);
+    setError('');
+    try {
+      const res = await api.cancelWorkflowJob(activeJob.jobId);
+      setActiveJob((prev) => (prev ? { ...prev, ...res, jobId: prev.jobId, kind: prev.kind } : null));
+      if (res.status === 'CANCELLED') {
+        setPendingJobs((prev) => prev.filter((j) => j.jobId !== activeJob.jobId));
+        setMessage('Đã hủy tác vụ AI đang chờ.');
+      } else {
+        setMessage('Đã gửi yêu cầu hủy. Tác vụ sẽ dừng ngay sau bước hiện tại.');
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Không thể hủy tác vụ đang chờ.');
+      await refreshPendingJobs();
+    } finally {
+      setCancellingJob(false);
+    }
+  };
+
+  const handleCancelAllPendingJobs = async () => {
+    setCancellingJob(true);
+    setError('');
+    try {
+      const res = await api.cancelPendingWorkflowJobs(courseId);
+      const stillRunning = res.jobs.filter((j) => j.status === 'RUNNING' || j.status === 'QUEUED');
+      setPendingJobs(stillRunning);
+      setActiveJob((prev) => {
+        if (!prev?.jobId) return stillRunning[0] ?? null;
+        const matched = res.jobs.find((j) => j.jobId === prev.jobId);
+        if (matched) return { ...prev, ...matched };
+        return stillRunning[0] ?? prev;
+      });
+      if (res.cancelledCount === 0) {
+        setMessage('Không còn tác vụ AI nào đang chờ xử lý.');
+      } else if (stillRunning.length > 0) {
+        setMessage(
+          `Đã gửi yêu cầu hủy ${res.cancelledCount} tác vụ (${stillRunning.length} tác vụ đang xử lý sẽ dừng sau bước hiện tại).`,
+        );
+      } else {
+        setMessage(`Đã hủy toàn bộ ${res.cancelledCount} tác vụ AI đang chờ.`);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Không thể hủy các tác vụ đang chờ.');
+    } finally {
+      setCancellingJob(false);
     }
   };
 
@@ -566,17 +654,20 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
         if (!primarySyllabusId) primarySyllabusId = res.syllabusId;
       }
       const { jobId, status } = await api.createOutlineJob(courseId, primarySyllabusId, newIdempotencyKey('outline'));
-      setActiveJob({
-        kind: 'outline',
+      const nextJob = {
+        kind: 'outline' as const,
         jobId,
         status: (status as WorkflowJobResponse['status']) ?? 'QUEUED',
         progress: 10,
         canResume: true,
         resumeCount: 0,
         maxResumeAttempts: 3,
-      });
+      };
+      setActiveJob(nextJob);
+      setPendingJobs((prev) => (prev.some((j) => j.jobId === jobId) ? prev : [nextJob, ...prev]));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Không thể tạo job trích xuất khung môn học.');
+      void refreshPendingJobs();
     } finally {
       setBusy(false);
     }
@@ -659,17 +750,21 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
         currentChapter.revision,
         newIdempotencyKey('lesson'),
       );
-      setActiveJob({
-        kind: 'lesson',
+      const nextJob = {
+        kind: 'lesson' as const,
         jobId,
         status: (status as WorkflowJobResponse['status']) ?? 'QUEUED',
         progress: 15,
+        weekId: currentChapter.id,
         canResume: true,
         resumeCount: 0,
         maxResumeAttempts: 3,
-      });
+      };
+      setActiveJob(nextJob);
+      setPendingJobs((prev) => (prev.some((j) => j.jobId === jobId) ? prev : [nextJob, ...prev]));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Không thể khởi chạy Lesson Job.');
+      void refreshPendingJobs();
     } finally {
       setBusy(false);
     }
@@ -921,17 +1016,21 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
           baseSnapshotId: activeBaseSnapshot?.draftId ?? null,
         },
       );
-      setActiveJob({
-        kind: 'relation',
+      const nextJob = {
+        kind: 'relation' as const,
         jobId,
         status: (status as WorkflowJobResponse['status']) ?? 'QUEUED',
         progress: 20,
+        weekId: wid,
         canResume: true,
         resumeCount: 0,
         maxResumeAttempts: 3,
-      });
+      };
+      setActiveJob(nextJob);
+      setPendingJobs((prev) => (prev.some((j) => j.jobId === jobId) ? prev : [nextJob, ...prev]));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Không thể khởi chạy AI nối chương.');
+      void refreshPendingJobs();
     } finally {
       setBusy(false);
     }
@@ -1480,18 +1579,61 @@ export function CourseAuthoringWizard({ courseId, courseName, hasPublishedGraph:
               <div className="wizard-job-progress mini">
                 <div className={`wizard-job-fill ${barTone}`} style={{ width: `${activeJob.progress}%` }} />
               </div>
-              {(activeJob.status === 'BLOCKED' || activeJob.status === 'FAILED') && activeJob.canResume && (
+              {(activeJob.status === 'QUEUED' || activeJob.status === 'RUNNING') && (
+                <button
+                  type="button"
+                  className="btn btn-outline sm"
+                  style={{ color: '#b91c1c', borderColor: '#fecaca', background: '#fff5f5' }}
+                  disabled={cancellingJob || Boolean(activeJob.cancelRequested)}
+                  onClick={() => void handleCancelJob()}
+                >
+                  <XCircle size={12} />{' '}
+                  {activeJob.cancelRequested || cancellingJob ? 'Đang dừng...' : 'Hủy tác vụ'}
+                </button>
+              )}
+              {pendingJobs.length > 1 && (
+                <button
+                  type="button"
+                  className="btn btn-outline sm"
+                  style={{ color: '#b91c1c', borderColor: '#fecaca' }}
+                  disabled={cancellingJob}
+                  onClick={() => void handleCancelAllPendingJobs()}
+                >
+                  <XCircle size={12} /> Hủy tất cả ({pendingJobs.length})
+                </button>
+              )}
+              {(activeJob.status === 'BLOCKED' || activeJob.status === 'FAILED' || activeJob.status === 'CANCELLED') && activeJob.canResume && (
                 <button type="button" className="btn btn-primary sm" onClick={handleResumeJob}>
                   <RefreshCw size={12} /> Resume
                 </button>
               )}
-              {(activeJob.status === 'SUCCEEDED' || activeJob.status === 'FAILED') && (
+              {(activeJob.status === 'SUCCEEDED' || activeJob.status === 'FAILED' || activeJob.status === 'CANCELLED') && (
                 <button type="button" className="btn btn-outline sm" onClick={() => setActiveJob(null)}>Đóng</button>
               )}
             </div>
           </div>
         );
       })()}
+
+      {!activeJob && pendingJobs.length > 0 && (
+        <div className="wizard-job-strip active">
+          <div className="wizard-job-strip-left">
+            <Sparkles size={14} color="var(--primary)" style={{ flexShrink: 0 }} />
+            <b>Đang có {pendingJobs.length} tác vụ AI đang chờ xử lý</b>
+          </div>
+          <div className="wizard-job-strip-right">
+            <button
+              type="button"
+              className="btn btn-outline sm"
+              style={{ color: '#b91c1c', borderColor: '#fecaca', background: '#fff5f5' }}
+              disabled={cancellingJob}
+              onClick={() => void handleCancelAllPendingJobs()}
+            >
+              <XCircle size={12} /> {cancellingJob ? 'Đang hủy...' : 'Hủy các tác vụ đang chờ'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* STEP 1: D1 OUTLINE */}
       {step === 1 && (

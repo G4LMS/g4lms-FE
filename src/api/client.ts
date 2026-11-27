@@ -1225,6 +1225,31 @@ export const api = {
 
   getWorkflowJob: (jobId: string): Promise<WorkflowJobResponse> =>
     invoke(() => mockApi.getWorkflowJob(jobId), `/jobs/${encodeURIComponent(jobId)}`),
+  listActiveWorkflowJobs: (
+    courseId: string,
+  ): Promise<Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }>> =>
+    invoke(
+      () => mockApi.listActiveWorkflowJobs(courseId),
+      `/courses/${encodeURIComponent(courseId)}/jobs`,
+    ),
+  cancelWorkflowJob: (jobId: string): Promise<WorkflowJobResponse> =>
+    invoke(
+      () => mockApi.cancelWorkflowJob(jobId),
+      `/jobs/${encodeURIComponent(jobId)}/cancel`,
+      { method: 'POST' },
+    ),
+  cancelPendingWorkflowJobs: (
+    courseId: string,
+  ): Promise<{
+    cancelledCount: number;
+    cancelledJobIds: string[];
+    jobs: Array<WorkflowJobResponse & { kind: 'outline' | 'lesson' | 'relation' }>;
+  }> =>
+    invoke(
+      () => mockApi.cancelPendingWorkflowJobs(courseId),
+      `/courses/${encodeURIComponent(courseId)}/jobs/cancel-pending`,
+      { method: 'POST' },
+    ),
   resumeWorkflowJob: (jobId: string, idempotencyKey: string): Promise<{ jobId: string; status: 'QUEUED' }> =>
     invoke(
       () => mockApi.resumeWorkflowJob(jobId, idempotencyKey),
